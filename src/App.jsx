@@ -398,6 +398,21 @@ export default function App(){
         .bottom-nav-btn{transition:color .15s}
         .card-hover{transition:transform .15s,box-shadow .15s}
         .card-hover:hover{transform:translateY(-2px);box-shadow:0 6px 20px rgba(15,27,45,.1)!important}
+        @media print{
+          *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+          @page{margin:18mm 14mm;size:A4 portrait}
+          body{background:#fff!important;font-size:11pt}
+          .no-print,.no-print *{display:none!important}
+          .print-only{display:block!important}
+          .print-page-break{page-break-before:always}
+          header,nav,.shell-sidebar,.shell-bottomnav,.shell-topbar{display:none!important}
+          .shell-main{padding:12px!important}
+          .page-content{max-width:100%!important;padding:0!important}
+          a[href]:after{content:none!important}
+          button:not(.pdf-btn-keep){display:none!important}
+          select{display:none!important}
+          input{display:none!important}
+        }
       `}</style>
       <Toast msg={toast.msg} type={toast.type}/>
       {showLGPD&&<LGPDModal onAccept={handleLGPDAccept}/>}
@@ -3515,12 +3530,39 @@ function ReportsPanel({session}){
     {id:"visitantes",label:"Visitas",icon:"user-plus"},
   ]
 
+  const TAB_LABELS={frequencia:"Relatório de Frequência",celulas:"Desempenho das Células",faixas:"Faixas Etárias",visitantes:"Visitas e Conversão"}
+
+  function exportPDF(){
+    const cellName=cellFilter?cells.find(c=>c.id===cellFilter)?.name:"Toda a Igreja"
+    const title=`${TAB_LABELS[reportTab]} — ${cellName} — ${new Date().toLocaleDateString("pt-BR")}`
+    document.title=title
+    window.print()
+    setTimeout(()=>{document.title="Gestão de Células"},1000)
+  }
+
   return(
     <div>
-      <h2 style={{fontSize:18,fontWeight:800,color:"#0f172a",marginBottom:14}}>Relatórios</h2>
+      {/* cabeçalho de impressão (invisível na tela, aparece só no PDF) */}
+      <div className="print-only" style={{display:"none",borderBottom:"2px solid #1B4F8A",paddingBottom:12,marginBottom:20}}>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <div style={{width:40,height:40,borderRadius:"50%",background:"#1B4F8A",display:"flex",alignItems:"center",justifyContent:"center"}}><LogoIcon size={26}/></div>
+          <div>
+            <div style={{fontSize:18,fontWeight:800,color:"#1B4F8A"}}>{TAB_LABELS[reportTab]}</div>
+            <div style={{fontSize:12,color:"#64748b"}}>Promessa Lago dos Peixes · {cellFilter?cells.find(c=>c.id===cellFilter)?.name:"Toda a Igreja"} · Gerado em {new Date().toLocaleDateString("pt-BR",{day:"2-digit",month:"long",year:"numeric"})}</div>
+          </div>
+        </div>
+      </div>
 
-      {/* tab selector */}
-      <div style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto",paddingBottom:2}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:10,flexWrap:"wrap"}}>
+        <h2 style={{fontSize:18,fontWeight:800,color:"#0f172a",margin:0}}>Relatórios</h2>
+        <button onClick={exportPDF} className="no-print" style={{display:"flex",alignItems:"center",gap:6,padding:"8px 16px",background:"#1B4F8A",border:"none",borderRadius:10,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9,15 12,18 15,15"/></svg>
+          Exportar PDF
+        </button>
+      </div>
+
+      {/* seletor de abas */}
+      <div className="no-print" style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto",paddingBottom:2}}>
         {REPORT_TABS.map(t=>(
           <button key={t.id} onClick={()=>{setReportTab(t.id);setCellFilter("");setRiskFilter("todos")}}
             style={{flexShrink:0,display:"flex",alignItems:"center",gap:5,padding:"8px 14px",borderRadius:20,fontSize:12,fontWeight:700,border:`1.5px solid ${reportTab===t.id?C.primary:"#e2e8f0"}`,background:reportTab===t.id?C.primary:"#fff",color:reportTab===t.id?"#fff":"#64748b",cursor:"pointer",transition:"all .15s"}}>
