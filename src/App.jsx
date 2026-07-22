@@ -3162,153 +3162,379 @@ function ReportsPanel({session}){
   const{data:cells}=useTable("cells")
   const{data:attendance}=useTable("attendance")
   const{data:meetings}=useTable("meetings")
-  const Bar=({value,max,color})=>(<div style={{height:8,background:"#f1f5f9",borderRadius:4,overflow:"hidden",flex:1}}><div style={{height:"100%",width:`${max?Math.round(value/max*100):0}%`,background:color,borderRadius:4}}/></div>)
-  const activeMembers=members.filter(m=>m.status==="Membro")
-  const visitors=members.filter(m=>m.status==="Visitante")
-  const baptized=members.filter(m=>m.baptized).length
-  const currentMonth=getCurrentMonth()
-  const birthdays=members.filter(m=>m.birth_date&&getMonthBirthday(m.birth_date)===currentMonth)
-  const cellData=cells.map(c=>({name:c.name,type:c.cell_type||"Adultos",count:members.filter(m=>m.cell_id===c.id&&m.status==="Membro").length,visitors:members.filter(m=>m.cell_id===c.id&&m.status==="Visitante").length,goal:c.growth_goal||0,active:c.cell_status!=="Inativa"})).sort((a,b)=>b.count-a.count)
-  const genderData=activeMembers.reduce((a,m)=>{a[m.gender||"N/I"]=(a[m.gender||"N/I"]||0)+1;return a},{})
-  const churchMembers=activeMembers.filter(m=>m.church_member===true).length
-  const ageGroups=[
-    {label:"Crianças",icon:"🧒",color:"#06b6d4",count:members.filter(m=>m.age&&m.age<=10).length},
-    {label:"Adolescentes",icon:"🧑",color:"#8b5cf6",count:members.filter(m=>m.age&&m.age>=11&&m.age<=15).length},
-    {label:"Jovens",icon:"👦",color:"#10b981",count:members.filter(m=>m.age&&m.age>=16&&m.age<=22).length},
-    {label:"Adultos",icon:"👤",color:C.primary,count:members.filter(m=>m.age&&m.age>=23).length},
-    {label:"Sem idade",icon:"❓",color:"#94a3b8",count:members.filter(m=>!m.age).length},
-  ].filter(g=>g.count>0)
-  const notChurchMembers=activeMembers.filter(m=>m.church_member!==true).length
-  const cellChurchStats=cells.map(c=>{
-    const mc=members.filter(m=>m.cell_id===c.id&&m.status==="Membro")
-    const inChurch=mc.filter(m=>m.church_member===true).length
-    const notInChurch=mc.filter(m=>m.church_member!==true).length
-    return{name:c.name,type:c.cell_type||"Adultos",total:mc.length,inChurch,notInChurch,pct:mc.length>0?Math.round(inChurch/mc.length*100):0}
-  }).filter(c=>c.total>0).sort((a,b)=>b.total-a.total)
-  const typeData=activeMembers.reduce((a,m)=>{const cell=cells.find(c=>c.id===m.cell_id);const t=cell?.cell_type||"Sem célula";a[t]=(a[t]||0)+1;return a},{})
-  const attByMember={}
-  attendance.forEach(a=>{if(!attByMember[a.member_id])attByMember[a.member_id]={name:a.member_name,total:0,present:0};attByMember[a.member_id].total++;if(a.status==="Presente")attByMember[a.member_id].present++})
-  const attList=Object.values(attByMember).sort((a,b)=>(b.present/b.total||0)-(a.present/a.total||0)).slice(0,20)
+  const[reportTab,setReportTab]=useState("frequencia")
+  const[cellFilter,setCellFilter]=useState("")
+  const[sortAtt,setSortAtt]=useState("faltas") // "faltas" | "pct" | "nome"
+  const[riskFilter,setRiskFilter]=useState("todos") // "todos"|"critico"|"atencao"|"ok"
 
-  return(
-    <div>
-      <h2 style={{fontSize:18,fontWeight:800,color:"#0f172a",marginBottom:16}}>Relatórios</h2>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
-        <Stat label="Membros" value={activeMembers.length} color={C.primary} icon="users" sub={`+ ${visitors.length} visitantes`}/>
-        <Stat label="Batizados" value={baptized} color={C.gold} icon="check-circle"/>
-        <Stat label="Células Ativas" value={cells.filter(c=>c.cell_status!=="Inativa").length} color={C.success} icon="grid"/>
-        <Stat label="Encontros" value={meetings.length} color={C.purple} icon="calendar"/>
-      </div>
+  const isAdmin=session?.role==="admin"||session?.role==="supervisor"
+  const myCells=isAdmin?cells:cells.filter(c=>c.id===session?.cell_id)
 
-      {birthdays.length>0&&(
-        <Card style={{marginBottom:14,border:"1px solid #fde68a",background:"#fffbeb"}}>
-          <h3 style={{fontSize:14,fontWeight:800,color:"#92400e",marginBottom:12}}>🎂 Aniversariantes do Mês</h3>
-          {birthdays.map(m=>(
-            <div key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderTop:"1px solid #fde68a"}}>
-              <Avatar name={m.name} photo={m.photo_url} size={30} color={C.gold}/>
-              <div style={{flex:1}}><div style={{fontSize:13,fontWeight:700,color:"#92400e"}}>{m.name}</div><div style={{fontSize:11,color:"#b45309"}}>{fmtDate(m.birth_date)}{m.age?` • vai completar ${m.age+1} anos`:""}</div></div>
-              {m.phone&&<a href={whatsappLink(m.phone)} target="_blank" rel="noopener noreferrer" style={{background:"#dcfce7",border:"1px solid #bbf7d0",borderRadius:8,padding:"4px 8px",display:"flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700,color:"#166534",textDecoration:"none"}}><Icon name="whatsapp" size={11}/>Parabéns</a>}
-            </div>
-          ))}
-        </Card>
-      )}
+  // ── helpers ──
+  const SmallBar=({value,max,color})=>(<div style={{height:7,background:"#f1f5f9",borderRadius:4,overflow:"hidden",flex:1}}><div style={{height:"100%",width:`${max?Math.min(100,Math.round(value/max*100)):0}%`,background:color,borderRadius:4,transition:"width .5s"}}/></div>)
 
-      <Card style={{marginBottom:14}}>
-        <h3 style={{fontSize:14,fontWeight:800,color:"#0f172a",marginBottom:14}}>🎯 Meta por Célula</h3>
-        {cellData.map(({name,type,count,visitors,goal,active})=>(
-          <div key={name} style={{marginBottom:14,opacity:active?1:0.5}}>
-            <div style={{display:"flex",justifyContent:"space-between",marginBottom:5,alignItems:"center"}}>
-              <div><span style={{fontSize:13,fontWeight:700,color:"#334155"}}>{name}</span><span style={{fontSize:11,color:"#94a3b8",marginLeft:6}}>{type}</span></div>
-              <span style={{fontSize:12,color:"#64748b"}}>{count} mbr{visitors>0?` + ${visitors} vis.`:""}  {goal>0?`/ ${goal}`:""}</span>
-            </div>
-            {goal>0?<ProgressBar value={count} max={goal} color={C.primary} showLabel={false}/>:<div style={{height:6,background:"#f1f5f9",borderRadius:3}}/>}
+  function attColor(pct){return pct>=75?C.success:pct>=50?C.warning:C.danger}
+  function riskLabel(pct){return pct>=75?"ok":pct>=50?"atencao":"critico"}
+  function riskBadge(pct){
+    if(pct>=75)return{label:"✓ Regular",bg:"#dcfce7",color:C.success}
+    if(pct>=50)return{label:"⚠ Atenção",bg:"#fef3c7",color:C.warning}
+    return{label:"✗ Crítico",bg:"#fee2e2",color:C.danger}
+  }
+
+  // ── RELATÓRIO 1: FREQUÊNCIA POR MEMBRO ──────────────────────────────────────
+  function ReportFrequencia(){
+    // Build attendance map: memberId → {name, cellId, total, present, absences, consecutive}
+    const attMap={}
+    attendance.forEach(a=>{
+      if(!attMap[a.member_id])attMap[a.member_id]={name:a.member_name,cellId:a.cell_id,total:0,present:0,absences:0,justified:0,records:[]}
+      attMap[a.member_id].total++
+      if(a.status==="Presente")attMap[a.member_id].present++
+      else if(a.status==="Justificado")attMap[a.member_id].justified++
+      else attMap[a.member_id].absences++
+      attMap[a.member_id].records.push({date:a.date,status:a.status})
+    })
+
+    // Enrich with member data and calculate consecutive absences
+    let rows=members
+      .filter(m=>m.status==="Membro"||(m.status==="Visitante"&&attMap[m.id]))
+      .map(m=>{
+        const att=attMap[m.id]||{total:0,present:0,absences:0,justified:0,records:[]}
+        const sorted=att.records.sort((a,b)=>b.date.localeCompare(a.date))
+        let consecutive=0
+        for(const r of sorted){if(r.status==="Ausente")consecutive++;else break}
+        const pct=att.total>0?Math.round(att.present/att.total*100):null
+        const cell=cells.find(c=>c.id===m.cell_id)
+        return{...m,att,pct,consecutive,cellName:cell?.name||"Sem célula"}
+      })
+
+    // Filter by cell
+    if(cellFilter)rows=rows.filter(m=>m.cell_id===cellFilter)
+
+    // Filter by risk
+    if(riskFilter!=="todos")rows=rows.filter(m=>{
+      if(m.pct===null)return riskFilter==="critico"
+      return riskLabel(m.pct)===riskFilter
+    })
+
+    // Sort
+    if(sortAtt==="faltas")rows.sort((a,b)=>b.att.absences-a.att.absences)
+    else if(sortAtt==="pct")rows.sort((a,b)=>(a.pct??-1)-(b.pct??-1))
+    else rows.sort((a,b)=>a.name.localeCompare(b.name))
+
+    const totalRows=rows.length
+    const criticos=rows.filter(m=>m.pct!==null&&m.pct<50).length
+    const atencao=rows.filter(m=>m.pct!==null&&m.pct>=50&&m.pct<75).length
+    const semRegistro=rows.filter(m=>m.pct===null).length
+
+    return(
+      <div>
+        {/* resumo */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:16}}>
+          <div style={{background:"#fee2e2",borderRadius:12,padding:"10px 12px",textAlign:"center"}}>
+            <div style={{fontSize:22,fontWeight:900,color:C.danger}}>{criticos}</div>
+            <div style={{fontSize:11,color:C.danger,fontWeight:700}}>Crítico &lt;50%</div>
           </div>
-        ))}
-      </Card>
-
-      <Card style={{marginBottom:14}}>
-        <h3 style={{fontSize:14,fontWeight:800,color:"#0f172a",marginBottom:12}}>Por Sexo</h3>
-        {Object.entries(genderData).map(([k,v])=>(<div key={k} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}><span style={{fontSize:12,fontWeight:600,color:"#334155",minWidth:80}}>{k}</span><Bar value={v} max={activeMembers.length} color={C.primary}/><span style={{fontSize:12,fontWeight:700,color:C.primary,minWidth:24,textAlign:"right"}}>{v}</span></div>))}
-      </Card>
-
-      <Card style={{marginBottom:14}}>
-        <h3 style={{fontSize:14,fontWeight:800,color:"#0f172a",marginBottom:14}}>👶 Faixas Etárias</h3>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
-          {ageGroups.map(g=>(
-            <div key={g.label} style={{background:g.color+"10",borderRadius:12,padding:"10px 12px",border:`1px solid ${g.color}20`}}>
-              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
-                <span style={{fontSize:16}}>{g.icon}</span>
-                <span style={{fontSize:11,fontWeight:700,color:g.color,textTransform:"uppercase",letterSpacing:"0.04em"}}>{g.label}</span>
-              </div>
-              <div style={{fontSize:24,fontWeight:900,color:g.color,lineHeight:1}}>{g.count}</div>
-              <div style={{fontSize:11,color:"#64748b",marginTop:3}}>{members.length>0?Math.round(g.count/members.length*100):0}% do total</div>
-            </div>
-          ))}
-        </div>
-        <div style={{height:12,background:"#f1f5f9",borderRadius:6,overflow:"hidden",display:"flex"}}>
-          {ageGroups.filter(g=>g.label!=="Sem idade").map(g=>(
-            <div key={g.label} style={{height:"100%",width:`${members.length>0?Math.round(g.count/members.length*100):0}%`,background:g.color,transition:"width 0.6s"}} title={`${g.label}: ${g.count}`}/>
-          ))}
-        </div>
-        <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:8}}>
-          {ageGroups.filter(g=>g.label!=="Sem idade").map(g=>(
-            <div key={g.label} style={{display:"flex",alignItems:"center",gap:4}}>
-              <div style={{width:8,height:8,borderRadius:"50%",background:g.color}}/>
-              <span style={{fontSize:10,color:"#64748b",fontWeight:600}}>{g.label}</span>
-            </div>
-          ))}
-        </div>
-      </Card>
-      <Card style={{marginBottom:14,border:"1px solid #bfdbfe",background:"#eff6ff"}}>
-        <h3 style={{fontSize:14,fontWeight:800,color:C.primary,marginBottom:14}}>⛪ Membros da Promessa Lago dos Peixes</h3>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
-          <div style={{background:"#fff",borderRadius:12,padding:"12px",textAlign:"center",border:`1px solid ${C.primary}20`}}>
-            <div style={{fontSize:28,fontWeight:900,color:C.primary}}>{churchMembers}</div>
-            <div style={{fontSize:11,color:"#64748b",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.04em",marginTop:4}}>São membros</div>
-            <div style={{fontSize:12,color:C.primary,fontWeight:700,marginTop:2}}>{activeMembers.length>0?Math.round(churchMembers/activeMembers.length*100):0}%</div>
+          <div style={{background:"#fef3c7",borderRadius:12,padding:"10px 12px",textAlign:"center"}}>
+            <div style={{fontSize:22,fontWeight:900,color:C.warning}}>{atencao}</div>
+            <div style={{fontSize:11,color:C.warning,fontWeight:700}}>Atenção 50–74%</div>
           </div>
-          <div style={{background:"#fff",borderRadius:12,padding:"12px",textAlign:"center",border:"1px solid #fecaca"}}>
-            <div style={{fontSize:28,fontWeight:900,color:C.danger}}>{notChurchMembers}</div>
-            <div style={{fontSize:11,color:"#64748b",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.04em",marginTop:4}}>Não são membros</div>
-            <div style={{fontSize:12,color:C.danger,fontWeight:700,marginTop:2}}>{activeMembers.length>0?Math.round(notChurchMembers/activeMembers.length*100):0}%</div>
+          <div style={{background:"#dcfce7",borderRadius:12,padding:"10px 12px",textAlign:"center"}}>
+            <div style={{fontSize:22,fontWeight:900,color:C.success}}>{totalRows-criticos-atencao-semRegistro}</div>
+            <div style={{fontSize:11,color:C.success,fontWeight:700}}>Regular ≥75%</div>
           </div>
         </div>
-        <h4 style={{fontSize:13,fontWeight:800,color:"#0f172a",marginBottom:10}}>Por Célula</h4>
-        {cellChurchStats.map(c=>(
-          <div key={c.name} style={{marginBottom:12}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
-              <div><span style={{fontSize:13,fontWeight:700,color:"#334155"}}>{c.name}</span><span style={{fontSize:11,color:"#94a3b8",marginLeft:6}}>{c.total} membros</span></div>
-              <div style={{display:"flex",gap:8}}>
-                <span style={{fontSize:12,fontWeight:700,color:C.primary}}>✅ {c.inChurch} ({c.pct}%)</span>
-                <span style={{fontSize:12,fontWeight:700,color:C.danger}}>❌ {c.notInChurch}</span>
-              </div>
-            </div>
-            <div style={{height:8,background:"#f1f5f9",borderRadius:4,overflow:"hidden"}}>
-              <div style={{height:"100%",width:`${c.pct}%`,background:C.primary,borderRadius:4,transition:"width 0.6s"}}/>
-            </div>
-          </div>
-        ))}
-      </Card>
-      <Card style={{marginBottom:14}}>
-        <h3 style={{fontSize:14,fontWeight:800,color:"#0f172a",marginBottom:12}}>Por Tipo de Célula</h3>
-        {Object.entries(typeData).map(([k,v])=>(<div key={k} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}><span style={{fontSize:12,fontWeight:600,color:"#334155",minWidth:100}}>{k}</span><Bar value={v} max={activeMembers.length} color={C.gold}/><span style={{fontSize:12,fontWeight:700,color:C.gold,minWidth:24,textAlign:"right"}}>{v}</span></div>))}
-      </Card>
 
-      {attList.length>0&&(
-        <Card>
-          <h3 style={{fontSize:14,fontWeight:800,color:"#0f172a",marginBottom:14}}>Frequência Individual</h3>
-          {attList.map(({name,total,present})=>{
-            const pct=Math.round(present/total*100)
-            const color=pct>=75?C.success:pct>=50?C.warning:C.danger
+        {/* filtros */}
+        <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+          <select value={cellFilter} onChange={e=>setCellFilter(e.target.value)} style={{flex:1,minWidth:140,border:"1.5px solid #e2e8f0",borderRadius:10,padding:"8px 12px",fontSize:13,outline:"none",background:"#fff"}}>
+            <option value="">Todas as células</option>
+            {myCells.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <select value={riskFilter} onChange={e=>setRiskFilter(e.target.value)} style={{border:"1.5px solid #e2e8f0",borderRadius:10,padding:"8px 12px",fontSize:13,outline:"none",background:"#fff"}}>
+            <option value="todos">Todos os riscos</option>
+            <option value="critico">Crítico (&lt;50%)</option>
+            <option value="atencao">Atenção (50–74%)</option>
+            <option value="ok">Regular (≥75%)</option>
+          </select>
+          <select value={sortAtt} onChange={e=>setSortAtt(e.target.value)} style={{border:"1.5px solid #e2e8f0",borderRadius:10,padding:"8px 12px",fontSize:13,outline:"none",background:"#fff"}}>
+            <option value="faltas">↓ Mais faltas</option>
+            <option value="pct">↑ Menor %</option>
+            <option value="nome">A–Z Nome</option>
+          </select>
+        </div>
+
+        {rows.length===0&&<Card><p style={{color:"#94a3b8",textAlign:"center",margin:0}}>Nenhum resultado</p></Card>}
+
+        {/* lista de membros */}
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {rows.map(m=>{
+            const badge=m.pct!==null?riskBadge(m.pct):{label:"Sem dados",bg:"#f1f5f9",color:"#64748b"}
             return(
-              <div key={name} style={{marginBottom:10}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{fontSize:12,fontWeight:600,color:"#334155",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}</span><span style={{fontSize:12,fontWeight:800,color,marginLeft:8}}>{pct}%</span></div>
-                <div style={{display:"flex",gap:8,alignItems:"center"}}><div style={{height:6,background:"#f1f5f9",borderRadius:3,overflow:"hidden",flex:1}}><div style={{height:"100%",width:`${pct}%`,background:color,borderRadius:3}}/></div><span style={{fontSize:10,color:"#94a3b8",flexShrink:0}}>{present}/{total}</span></div>
+              <div key={m.id} style={{background:"#fff",borderRadius:14,border:`1.5px solid ${m.pct!==null&&m.pct<50?"#fecaca":m.pct!==null&&m.pct<75?"#fde68a":"#e8edf2"}`,padding:"12px 14px",boxShadow:"0 1px 4px rgba(0,0,0,0.04)"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                  <Avatar name={m.name} photo={m.photo_url} size={36} color={m.pct!==null?attColor(m.pct):"#94a3b8"}/>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:800,color:"#0f172a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.name}</div>
+                    <div style={{fontSize:11,color:"#94a3b8"}}>{m.cellName}{m.status==="Visitante"?" · Visitante":""}</div>
+                  </div>
+                  <span style={{fontSize:11,fontWeight:700,background:badge.bg,color:badge.color,borderRadius:20,padding:"3px 9px",flexShrink:0}}>{badge.label}</span>
+                </div>
+
+                {m.att.total>0?(
+                  <>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                      <SmallBar value={m.att.present} max={m.att.total} color={attColor(m.pct)}/>
+                      <span style={{fontSize:13,fontWeight:900,color:attColor(m.pct),minWidth:36,textAlign:"right"}}>{m.pct}%</span>
+                    </div>
+                    <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                      <span style={{fontSize:11,color:"#64748b"}}>✓ <b style={{color:C.success}}>{m.att.present}</b> presenças</span>
+                      <span style={{fontSize:11,color:"#64748b"}}>✗ <b style={{color:C.danger}}>{m.att.absences}</b> faltas</span>
+                      {m.att.justified>0&&<span style={{fontSize:11,color:"#64748b"}}>? <b style={{color:C.warning}}>{m.att.justified}</b> justif.</span>}
+                      {m.consecutive>=2&&<span style={{fontSize:11,fontWeight:700,color:C.danger,background:"#fee2e2",borderRadius:8,padding:"1px 7px"}}>🚨 {m.consecutive} faltas seguidas</span>}
+                    </div>
+                  </>
+                ):(
+                  <div style={{fontSize:12,color:"#94a3b8",fontStyle:"italic"}}>Sem registros de presença ainda</div>
+                )}
+
+                {m.phone&&(
+                  <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid #f1f5f9"}}>
+                    <a href={whatsappLink(m.phone)} target="_blank" rel="noopener noreferrer" style={{display:"inline-flex",alignItems:"center",gap:5,background:"#dcfce7",border:"1px solid #bbf7d0",borderRadius:8,padding:"5px 10px",fontSize:11,fontWeight:700,color:"#166534",textDecoration:"none"}}>
+                      <Icon name="whatsapp" size={12}/>Contatar pelo WhatsApp
+                    </a>
+                  </div>
+                )}
               </div>
             )
           })}
+        </div>
+        {semRegistro>0&&<p style={{fontSize:11,color:"#94a3b8",textAlign:"center",marginTop:12}}>{semRegistro} membro(s) sem nenhum encontro registrado</p>}
+      </div>
+    )
+  }
+
+  // ── RELATÓRIO 2: FAIXAS ETÁRIAS ─────────────────────────────────────────────
+  function ReportFaixas(){
+    const base=cellFilter?members.filter(m=>m.cell_id===cellFilter):members
+    const ativos=base.filter(m=>m.status==="Membro")
+    const faixas=[
+      {label:"Crianças (0–10)",color:"#06b6d4",count:ativos.filter(m=>m.age&&m.age<=10).length},
+      {label:"Adolescentes (11–15)",color:"#8b5cf6",count:ativos.filter(m=>m.age&&m.age>=11&&m.age<=15).length},
+      {label:"Jovens (16–22)",color:"#10b981",count:ativos.filter(m=>m.age&&m.age>=16&&m.age<=22).length},
+      {label:"Adultos (23–59)",color:C.primary,count:ativos.filter(m=>m.age&&m.age>=23&&m.age<=59).length},
+      {label:"60+",color:C.gold,count:ativos.filter(m=>m.age&&m.age>=60).length},
+      {label:"Sem idade cadastrada",color:"#94a3b8",count:ativos.filter(m=>!m.age).length},
+    ].filter(f=>f.count>0)
+    const total=ativos.length
+
+    // Masc/Fem
+    const masc=ativos.filter(m=>m.gender==="Masculino").length
+    const fem=ativos.filter(m=>m.gender==="Feminino").length
+    const outros=ativos.length-masc-fem
+
+    return(
+      <div>
+        <div style={{marginBottom:12}}>
+          <select value={cellFilter} onChange={e=>setCellFilter(e.target.value)} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"9px 12px",fontSize:13,outline:"none",background:"#fff"}}>
+            <option value="">Toda a igreja</option>
+            {myCells.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+
+        <Card style={{marginBottom:12}}>
+          <h3 style={{fontSize:14,fontWeight:800,color:"#0f172a",marginBottom:14}}>Faixas Etárias — {total} membros ativos</h3>
+          {faixas.map(f=>(
+            <div key={f.label} style={{marginBottom:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <div style={{width:10,height:10,borderRadius:"50%",background:f.color,flexShrink:0}}/>
+                  <span style={{fontSize:13,fontWeight:600,color:"#334155"}}>{f.label}</span>
+                </div>
+                <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                  <span style={{fontSize:12,fontWeight:900,color:f.color}}>{f.count}</span>
+                  <span style={{fontSize:11,color:"#94a3b8"}}>{total>0?Math.round(f.count/total*100):0}%</span>
+                </div>
+              </div>
+              <SmallBar value={f.count} max={total} color={f.color}/>
+            </div>
+          ))}
+          {total>0&&(
+            <div style={{height:14,background:"#f1f5f9",borderRadius:7,overflow:"hidden",display:"flex",marginTop:14}}>
+              {faixas.filter(f=>f.label!=="Sem idade cadastrada").map(f=>(
+                <div key={f.label} style={{height:"100%",width:`${Math.round(f.count/total*100)}%`,background:f.color}} title={`${f.label}: ${f.count}`}/>
+              ))}
+            </div>
+          )}
         </Card>
-      )}
+
+        <Card>
+          <h3 style={{fontSize:14,fontWeight:800,color:"#0f172a",marginBottom:12}}>Por Sexo</h3>
+          {[["Masculino",masc,C.primary],["Feminino",fem,"#e11d8c"],outros>0&&["Outro/N/I",outros,"#94a3b8"]].filter(Boolean).map(([k,v,cor])=>(
+            <div key={k} style={{marginBottom:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                <span style={{fontSize:13,fontWeight:600,color:"#334155"}}>{k}</span>
+                <div style={{display:"flex",gap:6}}><span style={{fontSize:13,fontWeight:900,color:cor}}>{v}</span><span style={{fontSize:11,color:"#94a3b8"}}>{total>0?Math.round(v/total*100):0}%</span></div>
+              </div>
+              <SmallBar value={v} max={total} color={cor}/>
+            </div>
+          ))}
+        </Card>
+      </div>
+    )
+  }
+
+  // ── RELATÓRIO 3: VISITAS E CONVERSÃO ────────────────────────────────────────
+  function ReportVisitantes(){
+    const base=cellFilter?members.filter(m=>m.cell_id===cellFilter):members
+    const visitors=base.filter(m=>m.status==="Visitante")
+    const converted=base.filter(m=>m.status==="Membro")
+
+    // Visitors with attendance records = returning visitors
+    const visitorsWithAtt=visitors.filter(m=>attendance.some(a=>a.member_id===m.id))
+
+    // Members who used to be visitors (heuristic: joined cell later, no way to know exactly — show all members baptized recently)
+    const batizados=base.filter(m=>m.status==="Membro"&&m.baptized)
+    const aBatizar=base.filter(m=>m.status==="Membro"&&m.baptized===false)
+    const naoMembros=base.filter(m=>m.status==="Membro"&&m.church_member!==true)
+
+    return(
+      <div>
+        <div style={{marginBottom:12}}>
+          <select value={cellFilter} onChange={e=>setCellFilter(e.target.value)} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"9px 12px",fontSize:13,outline:"none",background:"#fff"}}>
+            <option value="">Toda a igreja</option>
+            {myCells.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+          <div style={{background:C.primary+"10",borderRadius:12,padding:"12px",textAlign:"center",border:`1px solid ${C.primary}20`}}>
+            <div style={{fontSize:26,fontWeight:900,color:C.primary}}>{visitors.length}</div>
+            <div style={{fontSize:11,color:C.primary,fontWeight:700}}>Visitantes ativos</div>
+          </div>
+          <div style={{background:C.gold+"10",borderRadius:12,padding:"12px",textAlign:"center",border:`1px solid ${C.gold}20`}}>
+            <div style={{fontSize:26,fontWeight:900,color:C.gold}}>{visitorsWithAtt.length}</div>
+            <div style={{fontSize:11,color:C.gold,fontWeight:700}}>Voltaram ao menos 1x</div>
+          </div>
+          <div style={{background:C.success+"10",borderRadius:12,padding:"12px",textAlign:"center",border:`1px solid ${C.success}20`}}>
+            <div style={{fontSize:26,fontWeight:900,color:C.success}}>{batizados.length}</div>
+            <div style={{fontSize:11,color:C.success,fontWeight:700}}>Batizados</div>
+          </div>
+          <div style={{background:C.danger+"10",borderRadius:12,padding:"12px",textAlign:"center",border:`1px solid ${C.danger}20`}}>
+            <div style={{fontSize:26,fontWeight:900,color:C.danger}}>{aBatizar.length}</div>
+            <div style={{fontSize:11,color:C.danger,fontWeight:700}}>A batizar</div>
+          </div>
+        </div>
+
+        {visitors.length>0&&(
+          <Card style={{marginBottom:12}}>
+            <h3 style={{fontSize:14,fontWeight:800,color:"#0f172a",marginBottom:12}}>Visitantes ({visitors.length})</h3>
+            {visitors.map(m=>{
+              const att=attendance.filter(a=>a.member_id===m.id)
+              const cell=cells.find(c=>c.id===m.cell_id)
+              return(
+                <div key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderTop:"1px solid #f1f5f9"}}>
+                  <Avatar name={m.name} photo={m.photo_url} size={32} color={C.gold}/>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:700,color:"#0f172a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.name}</div>
+                    <div style={{fontSize:11,color:"#94a3b8"}}>{cell?.name||"Sem célula"} · {att.length} visita(s)</div>
+                  </div>
+                  {m.phone&&<a href={whatsappLink(m.phone)} target="_blank" rel="noopener noreferrer" style={{background:"#dcfce7",border:"1px solid #bbf7d0",borderRadius:8,padding:"4px 8px",display:"flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700,color:"#166534",textDecoration:"none",flexShrink:0}}><Icon name="whatsapp" size={11}/>Contato</a>}
+                </div>
+              )
+            })}
+          </Card>
+        )}
+
+        {naoMembros.length>0&&(
+          <Card style={{border:"1px solid #bfdbfe",background:"#eff6ff"}}>
+            <h3 style={{fontSize:14,fontWeight:800,color:C.primary,marginBottom:12}}>⛪ Membros de célula que não são membros da igreja ({naoMembros.length})</h3>
+            {naoMembros.map(m=>(
+              <div key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderTop:"1px solid #bfdbfe"}}>
+                <Avatar name={m.name} photo={m.photo_url} size={30} color={C.primary}/>
+                <div style={{flex:1,minWidth:0}}><div style={{fontSize:13,fontWeight:700,color:"#0f172a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.name}</div><div style={{fontSize:11,color:"#94a3b8"}}>{cells.find(c=>c.id===m.cell_id)?.name||"Sem célula"}</div></div>
+                {m.phone&&<a href={whatsappLink(m.phone)} target="_blank" rel="noopener noreferrer" style={{background:"#dcfce7",border:"1px solid #bbf7d0",borderRadius:8,padding:"4px 8px",display:"flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700,color:"#166534",textDecoration:"none",flexShrink:0}}><Icon name="whatsapp" size={11}/>Contato</a>}
+              </div>
+            ))}
+          </Card>
+        )}
+      </div>
+    )
+  }
+
+  // ── RELATÓRIO 4: VISÃO GERAL DAS CÉLULAS ────────────────────────────────────
+  function ReportCelulas(){
+    const cellStats=cells.map(c=>{
+      const mc=members.filter(m=>m.cell_id===c.id&&m.status==="Membro")
+      const vis=members.filter(m=>m.cell_id===c.id&&m.status==="Visitante")
+      const cellAtt=attendance.filter(a=>a.cell_id===c.id)
+      const cellMeetings=meetings.filter(m=>m.cell_id===c.id)
+      const present=cellAtt.filter(a=>a.status==="Presente").length
+      const total=cellAtt.length
+      const pct=total>0?Math.round(present/total*100):null
+      return{...c,membros:mc.length,visitantes:vis.length,encontros:cellMeetings.length,pct,memberList:mc}
+    }).filter(c=>c.cell_status!=="Inativa").sort((a,b)=>(a.pct??-1)-(b.pct??-1))
+
+    return(
+      <div>
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {cellStats.map(c=>(
+            <div key={c.id} style={{background:"#fff",borderRadius:14,border:`1.5px solid ${c.pct!==null&&c.pct<50?"#fecaca":c.pct!==null&&c.pct<75?"#fde68a":"#e8edf2"}`,padding:"14px 16px",boxShadow:"0 1px 4px rgba(0,0,0,0.04)"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                <div>
+                  <div style={{fontSize:15,fontWeight:800,color:"#0f172a"}}>{c.name}</div>
+                  <div style={{fontSize:11,color:"#94a3b8"}}>{c.day} às {c.time} · {c.neighborhood}</div>
+                </div>
+                {c.pct!==null&&(()=>{const b=riskBadge(c.pct);return<span style={{fontSize:11,fontWeight:700,background:b.bg,color:b.color,borderRadius:20,padding:"3px 10px"}}>{b.label}</span>})()}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6,marginBottom:10}}>
+                {[["Membros",c.membros,C.primary],["Visitantes",c.visitantes,C.gold],["Encontros",c.encontros,"#64748b"],["Frequência",c.pct!==null?`${c.pct}%`:"—",c.pct!==null?attColor(c.pct):"#94a3b8"]].map(([l,v,cor])=>(
+                  <div key={l} style={{textAlign:"center",background:"#f8fafc",borderRadius:8,padding:"6px 4px"}}>
+                    <div style={{fontSize:16,fontWeight:900,color:cor}}>{v}</div>
+                    <div style={{fontSize:10,color:"#94a3b8",fontWeight:600}}>{l}</div>
+                  </div>
+                ))}
+              </div>
+              {c.pct!==null&&<SmallBar value={c.pct} max={100} color={attColor(c.pct)}/>}
+              {c.growth_goal>0&&(
+                <div style={{marginTop:8}}>
+                  <div style={{fontSize:11,color:"#94a3b8",marginBottom:3}}>Meta: {c.membros}/{c.growth_goal} membros</div>
+                  <SmallBar value={c.membros} max={c.growth_goal} color={C.primary}/>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  const REPORT_TABS=[
+    {id:"frequencia",label:"Frequência",icon:"check-circle"},
+    {id:"celulas",label:"Células",icon:"grid"},
+    {id:"faixas",label:"Faixas Etárias",icon:"users"},
+    {id:"visitantes",label:"Visitas",icon:"user-plus"},
+  ]
+
+  return(
+    <div>
+      <h2 style={{fontSize:18,fontWeight:800,color:"#0f172a",marginBottom:14}}>Relatórios</h2>
+
+      {/* tab selector */}
+      <div style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto",paddingBottom:2}}>
+        {REPORT_TABS.map(t=>(
+          <button key={t.id} onClick={()=>{setReportTab(t.id);setCellFilter("");setRiskFilter("todos")}}
+            style={{flexShrink:0,display:"flex",alignItems:"center",gap:5,padding:"8px 14px",borderRadius:20,fontSize:12,fontWeight:700,border:`1.5px solid ${reportTab===t.id?C.primary:"#e2e8f0"}`,background:reportTab===t.id?C.primary:"#fff",color:reportTab===t.id?"#fff":"#64748b",cursor:"pointer",transition:"all .15s"}}>
+            <Icon name={t.icon} size={13}/>{t.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{animation:"fadeIn 0.2s ease"}}>
+        {reportTab==="frequencia"&&<ReportFrequencia/>}
+        {reportTab==="celulas"&&<ReportCelulas/>}
+        {reportTab==="faixas"&&<ReportFaixas/>}
+        {reportTab==="visitantes"&&<ReportVisitantes/>}
+      </div>
     </div>
   )
 }
