@@ -2124,8 +2124,7 @@ function MeetingsPanel({session,showToast}){
   const[savedMeeting,setSavedMeeting]=useState(null)
   const[commentsModal,setCommentsModal]=useState(null)
   const[editAttModal,setEditAttModal]=useState(null)
-  const[preacherSearch,setPreacherSearch]=useState(false)
-  const[preacherKidsSearch,setPreacherKidsSearch]=useState(false)
+  const[preacherSearchIdx,setPreacherSearchIdx]=useState(null)
   const[studySearch,setStudySearch]=useState(false)
   const[songSearch,setSongSearch]=useState(false)
   const[songQuery,setSongQuery]=useState("")
@@ -2136,7 +2135,7 @@ function MeetingsPanel({session,showToast}){
   const[saving,setSaving]=useState(false)
   const[cellFilter,setCellFilter]=useState("")
 
-  const emptyForm={cell_id:session?.cell_id||"",date:todayStr(),theme:"",preacher:"",preacher_kids:"",songs:"",photos_link:"",is_general:false}
+  const emptyForm={cell_id:session?.cell_id||"",date:todayStr(),theme:"",theme_youth:"",preachers:["",""],songs:"",photos_link:"",is_general:false}
   const[form,setForm]=useState(emptyForm)
   const f=k=>v=>setForm(p=>({...p,[k]:v}))
 
@@ -2146,7 +2145,10 @@ function MeetingsPanel({session,showToast}){
   function openNew(){setForm({...emptyForm,cell_id:session?.cell_id||""});setEditing(null);setMarks({});setStep("form")}
   function openEdit(meeting){
     const songList=meeting.songs?meeting.songs.split(", ").filter(Boolean):[]
-    setForm({cell_id:meeting.cell_id||"",date:meeting.date,theme:meeting.theme||"",preacher:meeting.preacher||"",preacher_kids:meeting.preacher_kids||"",songs:meeting.songs||"",photos_link:meeting.photos_link||"",is_general:meeting.is_general||false})
+    let preachers=["",""]
+    try{const arr=JSON.parse(meeting.preacher);if(Array.isArray(arr))preachers=arr.length<2?[...arr,...Array(2-arr.length).fill("")]:arr}
+    catch{preachers=[meeting.preacher||"",meeting.preacher_kids||""]}
+    setForm({cell_id:meeting.cell_id||"",date:meeting.date,theme:meeting.theme||"",theme_youth:meeting.theme_youth||"",preachers,songs:meeting.songs||"",photos_link:meeting.photos_link||"",is_general:meeting.is_general||false})
     setSelectedSongs(songList)
     setEditing(meeting.id);setMarks({});setStep("form")
   }
@@ -2155,7 +2157,7 @@ function MeetingsPanel({session,showToast}){
     if(!form.date){showToast("Data obrigatória","error");return}
     if(!form.is_general&&!form.cell_id){showToast("Selecione a célula","error");return}
     setSaving(true)
-    const payload={...form,cell_id:form.is_general?null:form.cell_id||null,created_by:session.id}
+    const payload={...form,cell_id:form.is_general?null:form.cell_id||null,created_by:session.id,preacher:JSON.stringify(form.preachers.filter(p=>p.trim())),preacher_kids:undefined}
     if(editing){
       await supabase.from("meetings").update(payload).eq("id",editing)
       const cellName=cells.find(c=>c.id===form.cell_id)?.name||"Celulão"
@@ -2244,8 +2246,8 @@ function MeetingsPanel({session,showToast}){
                   {cell&&<Badge label={cell.name} color={C.primary}/>}
                 </div>
                 {meeting.theme&&<div style={{fontSize:12,color:"#64748b"}}>📖 {meeting.theme}</div>}
-                {meeting.preacher&&<div style={{fontSize:12,color:"#64748b"}}>🎤 {meeting.preacher}</div>}
-                {meeting.preacher_kids&&<div style={{fontSize:12,color:"#64748b"}}>👧 {meeting.preacher_kids}</div>}
+                {(()=>{let ps=[];try{const a=JSON.parse(meeting.preacher);if(Array.isArray(a))ps=a.filter(Boolean)}catch{if(meeting.preacher)ps=[meeting.preacher];if(meeting.preacher_kids)ps.push(meeting.preacher_kids)};return ps.map((p,i)=><div key={i} style={{fontSize:12,color:"#64748b"}}>🎤 {p}</div>)})()}
+                {meeting.theme_youth&&<div style={{fontSize:12,color:"#64748b"}}>📖 Jovens: {meeting.theme_youth}</div>}
                 {meeting.songs&&<div style={{fontSize:12,color:"#64748b"}}>🎵 {meeting.songs}</div>}
               </div>
               <div style={{display:"flex",gap:4,flexDirection:"column",alignItems:"flex-end"}}>
@@ -2291,19 +2293,17 @@ function MeetingsPanel({session,showToast}){
           </div>
         </div>
         <div style={{marginBottom:14}}>
-          <label style={{display:"block",fontSize:11,fontWeight:700,color:"#64748b",marginBottom:5,letterSpacing:"0.05em",textTransform:"uppercase"}}>🎤 Quem passou a Palavra (Adultos)</label>
-          <div style={{display:"flex",gap:8}}>
-            <input value={form.preacher} onChange={e=>f("preacher")(e.target.value)} placeholder="Nome do pregador" style={{flex:1,border:"1.5px solid #e2e8f0",borderRadius:10,padding:"10px 14px",fontSize:14,outline:"none"}}/>
-            <button type="button" onClick={()=>setPreacherSearch(true)} style={{background:C.primary+"15",border:"none",borderRadius:10,padding:"10px 12px",cursor:"pointer",color:C.primary,display:"flex",alignItems:"center"}}><Icon name="search" size={14}/></button>
-          </div>
+          <label style={{display:"block",fontSize:11,fontWeight:700,color:"#64748b",marginBottom:6,letterSpacing:"0.05em",textTransform:"uppercase"}}>🎤 Quem passou a Palavra</label>
+          {form.preachers.map((p,i)=>(
+            <div key={i} style={{display:"flex",gap:8,marginBottom:8}}>
+              <input value={p} onChange={e=>{const arr=[...form.preachers];arr[i]=e.target.value;f("preachers")(arr)}} placeholder={i===0?"Pregador principal":`Pregador ${i+1}`} style={{flex:1,border:"1.5px solid #e2e8f0",borderRadius:10,padding:"10px 14px",fontSize:14,outline:"none"}}/>
+              <button type="button" onClick={()=>setPreacherSearchIdx(i)} style={{background:C.primary+"15",border:"none",borderRadius:10,padding:"10px 12px",cursor:"pointer",color:C.primary,display:"flex",alignItems:"center"}}><Icon name="search" size={14}/></button>
+              {form.preachers.length>1&&<button type="button" onClick={()=>f("preachers")(form.preachers.filter((_,j)=>j!==i))} style={{background:"#fee2e2",border:"none",borderRadius:10,padding:"10px 12px",cursor:"pointer",color:"#ef4444",display:"flex",alignItems:"center"}}><Icon name="x" size={14}/></button>}
+            </div>
+          ))}
+          <button type="button" onClick={()=>f("preachers")([...form.preachers,""])} style={{background:"#f8fafc",border:"1.5px dashed #cbd5e1",borderRadius:10,padding:"8px 16px",fontSize:12,fontWeight:700,color:"#64748b",cursor:"pointer",display:"flex",alignItems:"center",gap:6}}><Icon name="plus" size={13}/>Adicionar pregador</button>
         </div>
-        <div style={{marginBottom:14}}>
-          <label style={{display:"block",fontSize:11,fontWeight:700,color:"#64748b",marginBottom:5,letterSpacing:"0.05em",textTransform:"uppercase"}}>👧 Quem passou a Palavra (Kids)</label>
-          <div style={{display:"flex",gap:8}}>
-            <input value={form.preacher_kids} onChange={e=>f("preacher_kids")(e.target.value)} placeholder="Nome do pregador Kids" style={{flex:1,border:"1.5px solid #e2e8f0",borderRadius:10,padding:"10px 14px",fontSize:14,outline:"none"}}/>
-            <button type="button" onClick={()=>setPreacherKidsSearch(true)} style={{background:"#fef3c7",border:"none",borderRadius:10,padding:"10px 12px",cursor:"pointer",color:C.gold,display:"flex",alignItems:"center"}}><Icon name="search" size={14}/></button>
-          </div>
-        </div>
+        <Inp label="📖 Estudo dos Jovens" value={form.theme_youth} onChange={f("theme_youth")} placeholder="Tema do estudo dos jovens"/>
         <div style={{marginBottom:14}}>
           <label style={{display:"block",fontSize:11,fontWeight:700,color:"#64748b",marginBottom:5,letterSpacing:"0.05em",textTransform:"uppercase"}}>Músicas Cantadas</label>
           <div style={{display:"flex",gap:8,marginBottom:8}}>
@@ -2394,8 +2394,7 @@ function MeetingsPanel({session,showToast}){
           }}>Excluir</Btn>
         </div>
       </Modal>}
-      <MemberSearchModal open={preacherSearch} title="🎤 Quem passou a Palavra? (Adultos)" members={members} onSelect={m=>f("preacher")(m.name)} onClose={()=>setPreacherSearch(false)}/>
-      <MemberSearchModal open={preacherKidsSearch} title="👧 Quem passou a Palavra? (Kids)" members={members} onSelect={m=>f("preacher_kids")(m.name)} onClose={()=>setPreacherKidsSearch(false)}/>
+      <MemberSearchModal open={preacherSearchIdx!==null} title="🎤 Quem passou a Palavra?" members={members} onSelect={m=>{const arr=[...form.preachers];arr[preacherSearchIdx]=m.name;f("preachers")(arr)}} onClose={()=>setPreacherSearchIdx(null)}/>
       <Modal open={songSearch} onClose={()=>setSongSearch(false)} title="Selecionar Músicas 🎵">
         <p style={{fontSize:12,color:"#64748b",marginBottom:10}}>Selecione quantas músicas quiser. Clique novamente para remover.</p>
         <div style={{position:"relative",marginBottom:12}}>
@@ -3198,40 +3197,64 @@ function ReportsPanel({session}){
 
   // ── RELATÓRIO 1: FREQUÊNCIA POR MEMBRO ──────────────────────────────────────
   function ReportFrequencia(){
-    // Build attendance map: memberId → {name, cellId, total, present, absences, consecutive}
+    // Todos os encontros ordenados por data por célula
+    const meetingsByCellSorted={}
+    meetings.forEach(mt=>{
+      const cid=mt.cell_id||"geral"
+      if(!meetingsByCellSorted[cid])meetingsByCellSorted[cid]=[]
+      meetingsByCellSorted[cid].push(mt)
+    })
+    Object.values(meetingsByCellSorted).forEach(arr=>arr.sort((a,b)=>a.date.localeCompare(b.date)))
+
+    // Mapa de presença por membro com todos os registros
     const attMap={}
     attendance.forEach(a=>{
-      if(!attMap[a.member_id])attMap[a.member_id]={name:a.member_name,cellId:a.cell_id,total:0,present:0,absences:0,justified:0,records:[]}
-      attMap[a.member_id].total++
-      if(a.status==="Presente")attMap[a.member_id].present++
-      else if(a.status==="Justificado")attMap[a.member_id].justified++
-      else attMap[a.member_id].absences++
-      attMap[a.member_id].records.push({date:a.date,status:a.status})
+      if(!attMap[a.member_id])attMap[a.member_id]={records:[]}
+      attMap[a.member_id].records.push({date:a.date,status:a.status,cell_id:a.cell_id})
     })
 
-    // Enrich with member data and calculate consecutive absences
+    // Enrich com contexto de "desde quando"
     let rows=members
       .filter(m=>m.status==="Membro"||(m.status==="Visitante"&&attMap[m.id]))
       .map(m=>{
-        const att=attMap[m.id]||{total:0,present:0,absences:0,justified:0,records:[]}
-        const sorted=att.records.sort((a,b)=>b.date.localeCompare(a.date))
+        const records=(attMap[m.id]?.records||[]).sort((a,b)=>a.date.localeCompare(b.date))
+        const firstDate=records.length>0?records[0].date:null
+
+        // Encontros da célula a partir do primeiro registro do membro
+        const cellMeetings=(meetingsByCellSorted[m.cell_id]||[])
+        const totalCellMeetings=cellMeetings.length
+        const meetingsSinceFirst=firstDate?cellMeetings.filter(mt=>mt.date>=firstDate):[]
+        const firstMeetingIndex=firstDate?cellMeetings.findIndex(mt=>mt.date>=firstDate):-1
+        const meetingNumber=firstMeetingIndex>=0?firstMeetingIndex+1:null
+
+        // Contagem desde o primeiro registro
+        const present=records.filter(r=>r.status==="Presente").length
+        const absences=records.filter(r=>r.status==="Ausente").length
+        const justified=records.filter(r=>r.status==="Justificado").length
+        const total=records.length
+        const pct=total>0?Math.round(present/total*100):null
+
+        // Faltas consecutivas (das mais recentes)
+        const desc=[...records].sort((a,b)=>b.date.localeCompare(a.date))
         let consecutive=0
-        for(const r of sorted){if(r.status==="Ausente")consecutive++;else break}
-        const pct=att.total>0?Math.round(att.present/att.total*100):null
+        for(const r of desc){if(r.status==="Ausente")consecutive++;else break}
+
         const cell=cells.find(c=>c.id===m.cell_id)
-        return{...m,att,pct,consecutive,cellName:cell?.name||"Sem célula"}
+        return{
+          ...m,
+          att:{total,present,absences,justified,records},
+          pct,consecutive,
+          cellName:cell?.name||"Sem célula",
+          firstDate,meetingNumber,totalCellMeetings,
+          meetingsSinceCount:meetingsSinceFirst.length
+        }
       })
 
-    // Filter by cell
     if(cellFilter)rows=rows.filter(m=>m.cell_id===cellFilter)
-
-    // Filter by risk
     if(riskFilter!=="todos")rows=rows.filter(m=>{
       if(m.pct===null)return riskFilter==="critico"
       return riskLabel(m.pct)===riskFilter
     })
-
-    // Sort
     if(sortAtt==="faltas")rows.sort((a,b)=>b.att.absences-a.att.absences)
     else if(sortAtt==="pct")rows.sort((a,b)=>(a.pct??-1)-(b.pct??-1))
     else rows.sort((a,b)=>a.name.localeCompare(b.name))
@@ -3240,6 +3263,8 @@ function ReportsPanel({session}){
     const criticos=rows.filter(m=>m.pct!==null&&m.pct<50).length
     const atencao=rows.filter(m=>m.pct!==null&&m.pct>=50&&m.pct<75).length
     const semRegistro=rows.filter(m=>m.pct===null).length
+
+    function fmtShortDate(d){if(!d)return"";try{const[,m,day]=d.split("-");return`${day}/${m}`}catch{return d}}
 
     return(
       <div>
@@ -3280,10 +3305,17 @@ function ReportsPanel({session}){
 
         {rows.length===0&&<Card><p style={{color:"#94a3b8",textAlign:"center",margin:0}}>Nenhum resultado</p></Card>}
 
-        {/* lista de membros */}
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           {rows.map(m=>{
             const badge=m.pct!==null?riskBadge(m.pct):{label:"Sem dados",bg:"#f1f5f9",color:"#64748b"}
+            // contexto de "desde quando"
+            const sinceCtx=m.meetingNumber&&m.firstDate
+              ?(m.meetingNumber===1
+                ? `Desde o 1º encontro (${fmtShortDate(m.firstDate)})`
+                : `A partir do ${m.meetingNumber}º encontro (${fmtShortDate(m.firstDate)})`)
+              :null
+            // encontros que aconteceram antes do membro entrar
+            const meetingsBefore=m.totalCellMeetings-m.meetingsSinceCount
             return(
               <div key={m.id} style={{background:"#fff",borderRadius:14,border:`1.5px solid ${m.pct!==null&&m.pct<50?"#fecaca":m.pct!==null&&m.pct<75?"#fde68a":"#e8edf2"}`,padding:"12px 14px",boxShadow:"0 1px 4px rgba(0,0,0,0.04)"}}>
                 <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
@@ -3297,6 +3329,14 @@ function ReportsPanel({session}){
 
                 {m.att.total>0?(
                   <>
+                    {/* contexto "desde quando" */}
+                    {sinceCtx&&(
+                      <div style={{fontSize:11,color:"#64748b",background:"#f8fafc",borderRadius:8,padding:"5px 9px",marginBottom:8,display:"flex",alignItems:"center",gap:5}}>
+                        <span style={{color:"#94a3b8"}}>📅</span>
+                        <span>{sinceCtx}</span>
+                        {meetingsBefore>0&&<span style={{color:"#94a3b8",marginLeft:"auto"}}>célula tinha {meetingsBefore} encontro{meetingsBefore>1?"s":""} antes</span>}
+                      </div>
+                    )}
                     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
                       <SmallBar value={m.att.present} max={m.att.total} color={attColor(m.pct)}/>
                       <span style={{fontSize:13,fontWeight:900,color:attColor(m.pct),minWidth:36,textAlign:"right"}}>{m.pct}%</span>
