@@ -205,6 +205,11 @@ const Card=({children,style:extra={}})=>(
 )
 
 const Modal=({open,onClose,title,children})=>{
+  React.useEffect(()=>{
+    if(open){document.body.style.overflow="hidden"}
+    else{document.body.style.overflow=""}
+    return()=>{document.body.style.overflow=""}
+  },[open])
   if(!open)return null
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.65)",zIndex:1000,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose()}}>
