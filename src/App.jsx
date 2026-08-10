@@ -4258,7 +4258,8 @@ function MemberPortal({session,logout,showToast}){
             {/* SEMANA */}
             {(()=>{
               const{start,end}=getCurrentWeekDates()
-              const weekBdays=cellMembers.filter(m=>{
+              const allCellPeople=[...cellMembers,...cellVisitors]
+              const weekBdays=allCellPeople.filter(m=>{
                 if(!m.birth_date)return false
                 const b=parseDate(m.birth_date)
                 const t=new Date(new Date().getFullYear(),b.getMonth(),b.getDate())
@@ -4314,7 +4315,7 @@ function MemberPortal({session,logout,showToast}){
             {(()=>{
               const currentMonth=getCurrentMonth()
               const monthNames=["","Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
-              const monthBdays=cellMembers.filter(m=>m.birth_date&&getMonthBirthday(m.birth_date)===currentMonth)
+              const monthBdays=[...cellMembers,...cellVisitors].filter(m=>m.birth_date&&getMonthBirthday(m.birth_date)===currentMonth)
                 .sort((a,b)=>parseDate(a.birth_date).getDate()-new Date(b.birth_date).getDate())
               return(
                 <div>
