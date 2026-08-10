@@ -2298,17 +2298,16 @@ function MeetingsPanel({session,showToast}){
           </div>
         </div>
         <div style={{marginBottom:14}}>
-          <label style={{display:"block",fontSize:11,fontWeight:700,color:"#64748b",marginBottom:6,letterSpacing:"0.05em",textTransform:"uppercase"}}>🎤 Quem passou a Palavra</label>
+          <label style={{display:"block",fontSize:11,fontWeight:700,color:"#64748b",marginBottom:6,letterSpacing:"0.05em",textTransform:"uppercase"}}>🎤 Quem conduziu a Palavra</label>
           {form.preachers.map((p,i)=>(
             <div key={i} style={{display:"flex",gap:8,marginBottom:8}}>
-              <input value={p} onChange={e=>{const arr=[...form.preachers];arr[i]=e.target.value;f("preachers")(arr)}} placeholder={i===0?"Pregador principal":`Pregador ${i+1}`} style={{flex:1,border:"1.5px solid #e2e8f0",borderRadius:10,padding:"10px 14px",fontSize:14,outline:"none"}}/>
+              <input value={p} onChange={e=>{const arr=[...form.preachers];arr[i]=e.target.value;f("preachers")(arr)}} placeholder={i===0?"Nome de quem conduziu":`Condutor ${i+1}`} style={{flex:1,border:"1.5px solid #e2e8f0",borderRadius:10,padding:"10px 14px",fontSize:14,outline:"none"}}/>
               <button type="button" onClick={()=>setPreacherSearchIdx(i)} style={{background:C.primary+"15",border:"none",borderRadius:10,padding:"10px 12px",cursor:"pointer",color:C.primary,display:"flex",alignItems:"center"}}><Icon name="search" size={14}/></button>
               {form.preachers.length>1&&<button type="button" onClick={()=>f("preachers")(form.preachers.filter((_,j)=>j!==i))} style={{background:"#fee2e2",border:"none",borderRadius:10,padding:"10px 12px",cursor:"pointer",color:"#ef4444",display:"flex",alignItems:"center"}}><Icon name="x" size={14}/></button>}
             </div>
           ))}
-          <button type="button" onClick={()=>f("preachers")([...form.preachers,""])} style={{background:"#f8fafc",border:"1.5px dashed #cbd5e1",borderRadius:10,padding:"8px 16px",fontSize:12,fontWeight:700,color:"#64748b",cursor:"pointer",display:"flex",alignItems:"center",gap:6}}><Icon name="plus" size={13}/>Adicionar pregador</button>
+          <button type="button" onClick={()=>f("preachers")([...form.preachers,""])} style={{background:"#f8fafc",border:"1.5px dashed #cbd5e1",borderRadius:10,padding:"8px 16px",fontSize:12,fontWeight:700,color:"#64748b",cursor:"pointer",display:"flex",alignItems:"center",gap:6}}><Icon name="plus" size={13}/>Adicionar condutor</button>
         </div>
-        <Inp label="📖 Estudo dos Jovens" value={form.theme_youth} onChange={f("theme_youth")} placeholder="Tema do estudo dos jovens"/>
         <div style={{marginBottom:14}}>
           <label style={{display:"block",fontSize:11,fontWeight:700,color:"#64748b",marginBottom:5,letterSpacing:"0.05em",textTransform:"uppercase"}}>Músicas Cantadas</label>
           <div style={{display:"flex",gap:8,marginBottom:8}}>
