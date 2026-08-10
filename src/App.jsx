@@ -2441,6 +2441,7 @@ function MeetingsPanel({session,showToast}){
                 {s.week_start&&s.week_end&&<span style={{fontSize:11,color:"#94a3b8"}}>{fmtWeek(s.week_start,s.week_end)}</span>}
                 {s.link&&<span style={{fontSize:11,color:C.primary,fontWeight:600}}>🔗 Material disponível</span>}
                 {s.link_kids&&<span style={{fontSize:11,color:C.gold,fontWeight:600}}>👧 Kids disponível</span>}
+                {s.link_youth&&<span style={{fontSize:11,color:C.purple,fontWeight:600}}>🧑 Jovens disponível</span>}
               </div>
             </button>
           )
@@ -3059,7 +3060,7 @@ function StudiesPanel({session,showToast}){
   const[editing,setEditing]=useState(null)
   const[deleteId,setDeleteId]=useState(null)
   const{start:ws,end:we}=getWeekRange()
-  const emptyForm={title:"",link:"",link_kids:"",cell_id:"",week_start:ws,week_end:we,description:""}
+  const emptyForm={title:"",link:"",link_kids:"",link_youth:"",cell_id:"",week_start:ws,week_end:we,description:""}
   const[form,setForm]=useState(emptyForm)
   const f=k=>v=>setForm(p=>({...p,[k]:v}))
   const isAdmin=session?.role==="admin"||session?.role==="supervisor"
@@ -3075,7 +3076,7 @@ function StudiesPanel({session,showToast}){
 
   async function save(){
     if(!form.title.trim()){showToast("Título obrigatório","error");return}
-    const payload={title:form.title.trim(),link:form.link,link_kids:form.link_kids||null,cell_id:form.cell_id||null,week_start:form.week_start||null,week_end:form.week_end||null,description:form.description,created_by:session.id}
+    const payload={title:form.title.trim(),link:form.link,link_kids:form.link_kids||null,link_youth:form.link_youth||null,cell_id:form.cell_id||null,week_start:form.week_start||null,week_end:form.week_end||null,description:form.description,created_by:session.id}
     if(editing){
       await supabase.from("studies").update(payload).eq("id",editing)
       showToast("Estudo atualizado!")
@@ -3092,7 +3093,7 @@ function StudiesPanel({session,showToast}){
   }
 
   function openEdit(s){
-    setForm({title:s.title,link:s.link||"",link_kids:s.link_kids||"",cell_id:s.cell_id||"",week_start:s.week_start||"",week_end:s.week_end||"",description:s.description||""})
+    setForm({title:s.title,link:s.link||"",link_kids:s.link_kids||"",link_youth:s.link_youth||"",cell_id:s.cell_id||"",week_start:s.week_start||"",week_end:s.week_end||"",description:s.description||""})
     setEditing(s.id);setModal(true)
   }
 
@@ -3143,6 +3144,11 @@ function StudiesPanel({session,showToast}){
                   <Icon name="star" size={14}/>👧 Estudo Kids
                 </a>
               )}
+              {s.link_youth&&(
+                <a href={s.link_youth} target="_blank" rel="noopener noreferrer" style={{display:"inline-flex",alignItems:"center",gap:6,background:"#7c3aed",borderRadius:10,padding:"8px 16px",color:"#fff",textDecoration:"none",fontSize:13,fontWeight:700,boxShadow:"0 2px 8px rgba(124,58,237,0.4)"}}>
+                  <Icon name="star" size={14}/>🧑 Estudo Jovens
+                </a>
+              )}
             </div>
           </Card>
         )
@@ -3152,6 +3158,7 @@ function StudiesPanel({session,showToast}){
         <Inp label="Tema do Estudo" value={form.title} onChange={f("title")} required placeholder="Ex: Jesus, o Bom Pastor"/>
         <Inp label="Link do Material" value={form.link} onChange={f("link")} placeholder="https://drive.google.com/..."/>
         <Inp label="Link Kids 👧" value={form.link_kids} onChange={f("link_kids")} placeholder="https://drive.google.com/... (versão para crianças)"/>
+        <Inp label="Link Jovens 🧑" value={form.link_youth} onChange={f("link_youth")} placeholder="https://drive.google.com/... (versão para jovens)"/>
         <div style={{marginBottom:14}}>
           <label style={{display:"block",fontSize:11,fontWeight:700,color:"#64748b",marginBottom:6,letterSpacing:"0.05em",textTransform:"uppercase"}}>Semana de Vigência</label>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
