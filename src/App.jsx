@@ -205,7 +205,7 @@ const Card=({children,style:extra={}})=>(
 )
 
 const Modal=({open,onClose,title,children})=>{
-  React.useEffect(()=>{
+  useEffect(()=>{
     if(open){document.body.style.overflow="hidden"}
     else{document.body.style.overflow=""}
     return()=>{document.body.style.overflow=""}
