@@ -907,6 +907,9 @@ function LeaderHome({session,showToast,setTab}){
   const pendingPrayers=prayers.filter(p=>p.cell_id===session.cell_id&&p.status==="pending").length
   const{start,end}=getCurrentWeekDates()
   const weekBirthdays=members.filter(m=>m.cell_id===session.cell_id&&m.birth_date&&(()=>{const b=parseDate(m.birth_date);const t=new Date(new Date().getFullYear(),b.getMonth(),b.getDate());return t>=start&&t<=end})())
+  const currentMonth=getCurrentMonth()
+  const monthBirthdays=[...cellMembers,...cellVisitors].filter(m=>m.birth_date&&getMonthBirthday(m.birth_date)===currentMonth).sort((a,b)=>parseDate(a.birth_date).getDate()-parseDate(b.birth_date).getDate())
+  const monthNames=["","Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
   const menu=[
     {id:"meetings",icon:"meeting",label:"Encontros",desc:"Registrar e gerenciar",color:C.success},
     {id:"members",icon:"users",label:"Pessoas",desc:`${cellMembers.length} membros, ${cellVisitors.length} visitantes`,color:C.primary},
@@ -967,6 +970,30 @@ function LeaderHome({session,showToast,setTab}){
           </button>
         ))}
       </div>
+      {monthBirthdays.length>0&&(
+        <Card style={{marginTop:16,border:"1px solid #fde68a",background:"#fffbeb"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+            <span style={{fontSize:18}}>🎂</span>
+            <span style={{fontSize:13,fontWeight:800,color:"#92400e"}}>Aniversariantes — {monthNames[currentMonth]}</span>
+            <span style={{marginLeft:"auto",background:C.gold,color:"#fff",fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:10}}>{monthBirthdays.length}</span>
+          </div>
+          {monthBirthdays.map(m=>{
+            const bDate=parseDate(m.birth_date)
+            const dd=String(bDate.getDate()).padStart(2,"0")
+            const mm=String(bDate.getMonth()+1).padStart(2,"0")
+            return(
+              <div key={m.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderTop:"1px solid #fde68a"}}>
+                <Avatar name={m.name} photo={m.photo_url} size={28} color={C.gold}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:12,fontWeight:700,color:"#92400e",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.name}</div>
+                  <div style={{fontSize:10,color:"#b45309"}}>{dd}/{mm} {m.status==="Visitante"&&"· Visitante"}</div>
+                </div>
+                {m.phone&&<button onClick={()=>setLsBdModal(m)} style={{background:"#dcfce7",border:"1px solid #bbf7d0",borderRadius:6,padding:"3px 8px",display:"flex",alignItems:"center",gap:3,fontSize:10,fontWeight:700,color:"#166534",cursor:"pointer",flexShrink:0}}><Icon name="whatsapp" size={10}/>Parabéns</button>}
+              </div>
+            )
+          })}
+        </Card>
+      )}
     </div>
   )
 }
@@ -1234,7 +1261,7 @@ function AdminOverview({session,showToast,setTab}){
   // Birthdays
   const currentMonth=getCurrentMonth()
   const{start,end}=getCurrentWeekDates()
-  const birthdays=members.filter(m=>m.birth_date&&getMonthBirthday(m.birth_date)===currentMonth)
+  const birthdays=members.filter(m=>m.birth_date&&m.status!=="Inativo"&&getMonthBirthday(m.birth_date)===currentMonth).sort((a,b)=>parseDate(a.birth_date).getDate()-parseDate(b.birth_date).getDate())
   const weekBirthdays=members.filter(m=>{
     if(!m.birth_date)return false
     const b=parseDate(m.birth_date)
@@ -1531,7 +1558,7 @@ function AdminOverview({session,showToast,setTab}){
             <span style={{fontSize:13,fontWeight:800,color:"#92400e"}}>Aniversariantes — {monthNames[currentMonth]}</span>
           </div>
           {birthdays.length===0&&<p style={{color:"#b45309",fontSize:12,margin:0}}>Nenhum este mês</p>}
-          <div style={{maxHeight:160,overflowY:"auto"}}>
+          <div>
             {birthdays.map(m=>(
               <div key={m.id} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",borderTop:"1px solid #fde68a"}}>
                 <Avatar name={m.name} photo={m.photo_url} size={26} color={C.gold}/>
