@@ -2211,15 +2211,17 @@ function MeetingsPanel({session,showToast}){
     if(!form.date){showToast("Data obrigatória","error");return}
     if(!form.is_general&&!form.cell_id){showToast("Selecione a célula","error");return}
     setSaving(true)
-    const payload={...form,cell_id:form.is_general?null:form.cell_id||null,created_by:session.id,preacher:JSON.stringify(form.preachers.filter(p=>p.trim())),preacher_kids:undefined}
+    const payload={cell_id:form.is_general?null:form.cell_id||null,date:form.date,theme:form.theme,theme_youth:form.theme_youth,songs:form.songs,photos_link:form.photos_link,is_general:form.is_general,created_by:session.id,preacher:JSON.stringify(form.preachers.filter(p=>p.trim()))}
     if(editing){
-      await supabase.from("meetings").update(payload).eq("id",editing)
+      const{error}=await supabase.from("meetings").update(payload).eq("id",editing)
+      if(error){showToast("Erro ao salvar: "+error.message,"error");setSaving(false);return}
       const cellName=cells.find(c=>c.id===form.cell_id)?.name||"Celulão"
       await addLog(session,"update",`Encontro editado: ${cellName} — ${form.date}`)
       showToast("Encontro atualizado!")
       setStep(null);setEditing(null)
     }else{
-      const{data:newMeeting}=await supabase.from("meetings").insert(payload).select().single()
+      const{data:newMeeting,error}=await supabase.from("meetings").insert(payload).select().single()
+      if(error||!newMeeting){showToast("Erro ao criar encontro: "+(error?.message||"tente novamente"),"error");setSaving(false);return}
       if(newMeeting&&form.cell_id&&!form.is_general){
         const cell=cells.find(c=>c.id===form.cell_id)
         if(cell?.auto_create_meetings)await supabase.from("cells").update({next_meeting_date:getNextMeetingDate(cell.day)}).eq("id",form.cell_id)
