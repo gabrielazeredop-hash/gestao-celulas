@@ -3221,6 +3221,9 @@ function ReportsPanel({session}){
 
   const isAdmin=session?.role==="admin"||session?.role==="supervisor"
   const myCells=isAdmin?cells:cells.filter(c=>c.id===session?.cell_id)
+  const myCellIds=new Set(myCells.map(c=>c.id))
+  const baseMembers=isAdmin?members:members.filter(m=>myCellIds.has(m.cell_id))
+  const baseMeetings=isAdmin?meetings:meetings.filter(m=>(m.cell_id&&myCellIds.has(m.cell_id))||m.is_general)
 
   // ── helpers ──
   const SmallBar=({value,max,color})=>(<div style={{height:7,background:"#f1f5f9",borderRadius:4,overflow:"hidden",flex:1}}><div style={{height:"100%",width:`${max?Math.min(100,Math.round(value/max*100)):0}%`,background:color,borderRadius:4,transition:"width .5s"}}/></div>)
@@ -3237,7 +3240,7 @@ function ReportsPanel({session}){
   function ReportFrequencia(){
     // Todos os encontros ordenados por data por célula
     const meetingsByCellSorted={}
-    meetings.forEach(mt=>{
+    baseMeetings.forEach(mt=>{
       const cid=mt.cell_id||"geral"
       if(!meetingsByCellSorted[cid])meetingsByCellSorted[cid]=[]
       meetingsByCellSorted[cid].push(mt)
@@ -3252,7 +3255,7 @@ function ReportsPanel({session}){
     })
 
     // Enrich com contexto de "desde quando"
-    let rows=members
+    let rows=baseMembers
       .filter(m=>m.status==="Membro"||(m.status==="Visitante"&&attMap[m.id]))
       .map(m=>{
         const records=(attMap[m.id]?.records||[]).sort((a,b)=>a.date.localeCompare(b.date))
@@ -3408,7 +3411,7 @@ function ReportsPanel({session}){
 
   // ── RELATÓRIO 2: FAIXAS ETÁRIAS ─────────────────────────────────────────────
   function ReportFaixas(){
-    const base=cellFilter?members.filter(m=>m.cell_id===cellFilter):members
+    const base=cellFilter?baseMembers.filter(m=>m.cell_id===cellFilter):baseMembers
     const ativos=base.filter(m=>m.status==="Membro")
     const faixas=[
       {label:"Crianças (0–10)",color:"#06b6d4",count:ativos.filter(m=>m.age&&m.age<=10).length},
@@ -3478,7 +3481,7 @@ function ReportsPanel({session}){
 
   // ── RELATÓRIO 3: VISITAS E CONVERSÃO ────────────────────────────────────────
   function ReportVisitantes(){
-    const base=cellFilter?members.filter(m=>m.cell_id===cellFilter):members
+    const base=cellFilter?baseMembers.filter(m=>m.cell_id===cellFilter):baseMembers
     const visitors=base.filter(m=>m.status==="Visitante")
     const converted=base.filter(m=>m.status==="Membro")
 
@@ -3556,11 +3559,11 @@ function ReportsPanel({session}){
 
   // ── RELATÓRIO 4: VISÃO GERAL DAS CÉLULAS ────────────────────────────────────
   function ReportCelulas(){
-    const cellStats=cells.map(c=>{
-      const mc=members.filter(m=>m.cell_id===c.id&&m.status==="Membro")
-      const vis=members.filter(m=>m.cell_id===c.id&&m.status==="Visitante")
+    const cellStats=myCells.map(c=>{
+      const mc=baseMembers.filter(m=>m.cell_id===c.id&&m.status==="Membro")
+      const vis=baseMembers.filter(m=>m.cell_id===c.id&&m.status==="Visitante")
       const cellAtt=attendance.filter(a=>a.cell_id===c.id)
-      const cellMeetings=meetings.filter(m=>m.cell_id===c.id)
+      const cellMeetings=baseMeetings.filter(m=>m.cell_id===c.id)
       const present=cellAtt.filter(a=>a.status==="Presente").length
       const total=cellAtt.length
       const pct=total>0?Math.round(present/total*100):null
