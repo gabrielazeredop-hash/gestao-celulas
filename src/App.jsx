@@ -1804,6 +1804,8 @@ function MembersPanel({session,showToast}){
   const[reactivateModal,setReactivateModal]=useState(null)
   const[requestInactModal,setRequestInactModal]=useState(null)
   const[requestInactReason,setRequestInactReason]=useState("")
+  const[requestDeleteModal,setRequestDeleteModal]=useState(null)
+  const[requestDeleteReason,setRequestDeleteReason]=useState("")
 
   async function submitInactRequest(){
     if(!requestInactReason.trim()){showToast("Informe o motivo","error");return}
@@ -1811,6 +1813,14 @@ function MembersPanel({session,showToast}){
     await supabase.from("inactivation_requests").insert({member_id:m.id,member_name:m.name,cell_id:m.cell_id||null,reason:requestInactReason.trim(),requested_by:session.id,requested_by_name:session.name,status:"pending"})
     await addLog(session,"create",`Solicitação de inativação enviada: ${m.name}`)
     showToast("Solicitação enviada ao gestor!");setRequestInactModal(null);setRequestInactReason("")
+  }
+
+  async function submitDeleteRequest(){
+    if(!requestDeleteReason.trim()){showToast("Informe o motivo","error");return}
+    const m=members.find(x=>x.id===requestDeleteModal)
+    await supabase.from("inactivation_requests").insert({member_id:m.id,member_name:m.name,cell_id:m.cell_id||null,reason:`[EXCLUIR] ${requestDeleteReason.trim()}`,requested_by:session.id,requested_by_name:session.name,status:"pending"})
+    await addLog(session,"create",`Solicitação de exclusão enviada: ${m.name}`)
+    showToast("Solicitação de exclusão enviada ao gestor!");setRequestDeleteModal(null);setRequestDeleteReason("")
   }
 
   const emptyForm={name:"",cpf:"",birth_date:"",age:"",gender:"Masculino",phone:"",email:"",neighborhood:"",cell_id:"",status:"Visitante",baptized:false,baptism_date:"",invited_by:"",father_name:"",mother_name:"",spouse_name:"",photo_url:"",church_member:false}
@@ -1972,6 +1982,7 @@ function MembersPanel({session,showToast}){
                 {!isInativo&&<button onClick={e=>{e.stopPropagation();openEdit(m)}} style={{background:C.primary+"15",border:"none",borderRadius:8,padding:6,cursor:"pointer",color:C.primary}}><Icon name="edit" size={13}/></button>}
                 {!isInativo&&canInactivate&&<button onClick={e=>{e.stopPropagation();setInactivateModal(m.id);setInactiveReason("")}} style={{background:"#fee2e2",border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer",color:C.danger,fontSize:11,fontWeight:700}}>Inativar</button>}
                 {!isInativo&&!canInactivate&&(session?.role==="leader"||session?.role==="secretary")&&<button onClick={e=>{e.stopPropagation();setRequestInactModal(m.id);setRequestInactReason("")}} style={{background:"#fef3c7",border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer",color:C.warning,fontSize:11,fontWeight:700}}>Solicitar Inativação</button>}
+                {!canInactivate&&(session?.role==="leader"||session?.role==="secretary")&&<button onClick={e=>{e.stopPropagation();setRequestDeleteModal(m.id);setRequestDeleteReason("")}} style={{background:"#fee2e2",border:"none",borderRadius:8,padding:6,cursor:"pointer",color:C.danger}}><Icon name="trash" size={13}/></button>}
                 {isInativo&&canInactivate&&<button onClick={e=>{e.stopPropagation();setReactivateModal(m.id)}} style={{background:"#dcfce7",border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer",color:C.success,fontSize:11,fontWeight:700}}>Reativar</button>}
                 {session?.role==="admin"&&<button onClick={e=>{e.stopPropagation();setDeleteId(m.id)}} style={{background:"#fee2e2",border:"none",borderRadius:8,padding:6,cursor:"pointer",color:C.danger}}><Icon name="trash" size={13}/></button>}
               </div>
@@ -2065,6 +2076,17 @@ function MembersPanel({session,showToast}){
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:8}}>
           <Btn variant="ghost" onClick={()=>setRequestInactModal(null)}>Cancelar</Btn>
           <Btn variant="warning" onClick={submitInactRequest}>Enviar Solicitação</Btn>
+        </div>
+      </Modal>
+
+      <Modal open={!!requestDeleteModal} onClose={()=>setRequestDeleteModal(null)} title="Solicitar Exclusão">
+        <div style={{background:"#fee2e2",border:"1px solid #fecaca",borderRadius:12,padding:"12px 14px",marginBottom:16}}>
+          <p style={{color:"#991b1b",fontSize:13,fontWeight:700,margin:0}}>🗑️ Use apenas para cadastros duplicados ou erros de cadastro. A exclusão será revisada pelo gestor antes de ser executada.</p>
+        </div>
+        <Textarea label="Motivo da exclusão" value={requestDeleteReason} onChange={setRequestDeleteReason} placeholder="Ex: Cadastro duplicado — já existe como João Silva" rows={3}/>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:8}}>
+          <Btn variant="ghost" onClick={()=>setRequestDeleteModal(null)}>Cancelar</Btn>
+          <Btn variant="danger" onClick={submitDeleteRequest}>Enviar Solicitação</Btn>
         </div>
       </Modal>
     </div>
@@ -3753,16 +3775,23 @@ function AllRequestsPanel({session,showToast}){
 
   async function resolveInact(id,status){
     const req=inactReqs.find(r=>r.id===id)
+    const isDeleteReq=req?.reason?.startsWith("[EXCLUIR]")
     await supabase.from("inactivation_requests").update({status,resolved_by:session.id,resolved_at:new Date().toISOString()}).eq("id",id)
     if(status==="approved"&&req){
-      await supabase.from("members").update({status:"Inativo",inactive_reason:req.reason,inactivated_at:new Date().toISOString(),inactivated_by:session.name}).eq("id",req.member_id)
-      await supabase.from("users").update({active:false}).eq("member_id",req.member_id)
-      await addLog(session,"update",`Inativação aprovada: ${req.member_name} — Motivo: ${req.reason}`)
+      if(isDeleteReq){
+        await supabase.from("members").delete().eq("id",req.member_id)
+        await supabase.from("users").delete().eq("member_id",req.member_id)
+        await addLog(session,"delete",`Exclusão aprovada: ${req.member_name} — ${req.reason}`)
+      }else{
+        await supabase.from("members").update({status:"Inativo",inactive_reason:req.reason,inactivated_at:new Date().toISOString(),inactivated_by:session.name}).eq("id",req.member_id)
+        await supabase.from("users").update({active:false}).eq("member_id",req.member_id)
+        await addLog(session,"update",`Inativação aprovada: ${req.member_name} — Motivo: ${req.reason}`)
+      }
     }
     if(status==="rejected"&&req){
-      await addLog(session,"update",`Inativação rejeitada: ${req.member_name}`)
+      await addLog(session,"update",`${isDeleteReq?"Exclusão":"Inativação"} rejeitada: ${req.member_name}`)
     }
-    showToast(status==="approved"?"Aprovado! Membro inativado.":"Solicitação rejeitada")
+    showToast(status==="approved"?(isDeleteReq?"Aprovado! Membro excluído.":"Aprovado! Membro inativado."):"Solicitação rejeitada")
   }
 
   async function resolveCellReq(id,status){
@@ -3792,11 +3821,29 @@ function AllRequestsPanel({session,showToast}){
       {tab==="inativacao"&&(
         <div>
           {inactReqs.length===0&&<Card><p style={{color:"#94a3b8",textAlign:"center",margin:0}}>Nenhuma solicitação</p></Card>}
-          {inactReqs.map(r=>(<Card key={r.id} style={{marginBottom:10,borderLeft:`3px solid ${sc[r.status]||C.warning}`}}>
-            <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}><div><span style={{fontSize:14,fontWeight:800,color:"#0f172a"}}>{r.member_name}</span><div style={{fontSize:11,color:"#94a3b8",marginTop:2}}>Por: {r.requested_by_name} • {fmtDate(r.created_at?.split("T")[0])}</div></div><Badge label={sl[r.status]||r.status} color={sc[r.status]||C.warning}/></div>
-            <p style={{fontSize:12,color:"#64748b",margin:"0 0 8px",background:"#f8fafc",borderRadius:8,padding:"8px 10px"}}>Motivo: {r.reason}</p>
-            {r.status==="pending"&&canResolve&&(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}><Btn variant="success" size="sm" onClick={()=>resolveInact(r.id,"approved")}>✓ Aprovar</Btn><Btn variant="danger" size="sm" onClick={()=>resolveInact(r.id,"rejected")}>✗ Rejeitar</Btn></div>)}
-          </Card>))}
+          {inactReqs.map(r=>{
+            const isDeleteReq=r.reason?.startsWith("[EXCLUIR]")
+            const displayReason=isDeleteReq?r.reason.replace("[EXCLUIR] ",""):r.reason
+            return(<Card key={r.id} style={{marginBottom:10,borderLeft:`3px solid ${isDeleteReq?C.danger:sc[r.status]||C.warning}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                <div>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:14,fontWeight:800,color:"#0f172a"}}>{r.member_name}</span>
+                    {isDeleteReq&&<span style={{fontSize:10,fontWeight:700,background:"#fee2e2",color:C.danger,borderRadius:6,padding:"1px 7px"}}>EXCLUSÃO</span>}
+                  </div>
+                  <div style={{fontSize:11,color:"#94a3b8",marginTop:2}}>Por: {r.requested_by_name} • {fmtDate(r.created_at?.split("T")[0])}</div>
+                </div>
+                <Badge label={sl[r.status]||r.status} color={sc[r.status]||C.warning}/>
+              </div>
+              <p style={{fontSize:12,color:"#64748b",margin:"0 0 8px",background:"#f8fafc",borderRadius:8,padding:"8px 10px"}}>Motivo: {displayReason}</p>
+              {r.status==="pending"&&canResolve&&(
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  <Btn variant={isDeleteReq?"danger":"success"} size="sm" onClick={()=>resolveInact(r.id,"approved")}>{isDeleteReq?"🗑️ Excluir":"✓ Aprovar"}</Btn>
+                  <Btn variant="ghost" size="sm" onClick={()=>resolveInact(r.id,"rejected")}>✗ Rejeitar</Btn>
+                </div>
+              )}
+            </Card>)
+          })}
         </div>
       )}
       {tab==="celula"&&(
