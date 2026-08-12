@@ -38,6 +38,17 @@ function calcAge(dob){if(!dob)return null;const b=parseDate(dob),n=new Date();le
 function ageOf(m){if(!m)return null;if(m.birth_date)return calcAge(m.birth_date);return m.age||null}
 // Idade que a pessoa COMPLETA no aniversário deste ano
 function ageTurning(dob){if(!dob)return null;return new Date().getFullYear()-parseDate(dob).getFullYear()}
+// Sabendo dia + mês do aniversário e a idade de HOJE, o ano de nascimento é exato:
+// basta saber se o aniversário deste ano já passou ou não.
+function birthYearFrom(day,month,age){
+  const d=parseInt(day),m=parseInt(month),a=parseInt(age)
+  if(!d||!m||isNaN(a)||a<0||a>120||m<1||m>12)return null
+  if(d<1||d>[31,29,31,30,31,30,31,31,30,31,30,31][m-1])return null
+  const n=new Date(),curM=n.getMonth()+1
+  const passou=curM>m||(curM===m&&n.getDate()>=d)
+  return n.getFullYear()-a-(passou?0:1)
+}
+const MESES=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
 function fmtCPF(v){const d=v.replace(/\D/g,"");if(d.length>9)return d.slice(0,3)+"."+d.slice(3,6)+"."+d.slice(6,9)+"-"+d.slice(9,11);if(d.length>6)return d.slice(0,3)+"."+d.slice(3,6)+"."+d.slice(6);if(d.length>3)return d.slice(0,3)+"."+d.slice(3);return d}
 function fmtPhone(v){const d=v.replace(/\D/g,"");if(d.length>10)return`(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7,11)}`;if(d.length>6)return`(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}`;if(d.length>2)return`(${d.slice(0,2)}) ${d.slice(2)}`;return d}
 // Data local no formato YYYY-MM-DD. NÃO usar toISOString: ele converte pra UTC e, depois
@@ -1835,8 +1846,15 @@ function MembersPanel({session,showToast}){
   const emptyForm={name:"",cpf:"",birth_date:"",age:"",gender:"Masculino",phone:"",email:"",neighborhood:"",cell_id:"",status:"Visitante",baptized:false,baptism_date:"",invited_by:"",father_name:"",mother_name:"",spouse_name:"",photo_url:"",church_member:false}
   const[form,setForm]=useState(emptyForm)
   const f=k=>v=>setForm(p=>({...p,[k]:v}))
+  // Como o cadastro sabe a data: completa, só dia+mês (calcula o ano pela idade), ou só a idade.
+  // Muita criança não sabe o ano em que nasceu.
+  const[birthMode,setBirthMode]=useState("full")
+  const[bDay,setBDay]=useState("");const[bMonth,setBMonth]=useState("")
 
   function openEdit(m){
+    setBirthMode(m.birth_date?"full":"age")
+    setBDay(m.birth_date?String(parseDate(m.birth_date).getDate()):"")
+    setBMonth(m.birth_date?String(parseDate(m.birth_date).getMonth()+1):"")
     setForm({name:m.name,cpf:m.cpf||"",birth_date:m.birth_date||"",age:m.age||"",gender:m.gender||"Masculino",phone:m.phone||"",email:m.email||"",neighborhood:m.neighborhood||"",cell_id:m.cell_id||"",status:m.status||"Visitante",baptized:m.baptized||false,baptism_date:m.baptism_date||"",invited_by:m.invited_by||"",father_name:m.father_name||"",mother_name:m.mother_name||"",spouse_name:m.spouse_name||"",photo_url:m.photo_url||"",church_member:m.church_member||false})
     setEditing(m.id);setModal(true)
   }
@@ -1862,7 +1880,15 @@ function MembersPanel({session,showToast}){
     if(!form.name.trim()){showToast("Nome é obrigatório","error");return}
     if(form.status==="Membro"&&!form.cpf.replace(/\D/g,"")){showToast("CPF obrigatório para Membros","error");return}
     const cpfNorm=form.cpf.replace(/\D/g,"")
-    const payload={name:form.name.trim().toUpperCase(),cpf:cpfNorm||null,age:form.birth_date?calcAge(form.birth_date):(parseInt(form.age)||0),birth_date:form.birth_date||null,gender:form.gender,phone:form.phone,email:form.email,neighborhood:form.neighborhood,cell_id:form.cell_id||null,status:form.status,role:"member",baptized:form.baptized,baptism_date:form.baptized&&form.baptism_date?form.baptism_date:null,invited_by:form.invited_by,father_name:form.father_name,mother_name:form.mother_name,spouse_name:form.spouse_name,photo_url:form.photo_url,church_member:form.church_member||false}
+    // Modo "só dia e mês": monta a data de nascimento real a partir do ano deduzido da idade.
+    let birthDate=birthMode==="age"?null:form.birth_date||null
+    if(birthMode==="daymonth"){
+      const y=birthYearFrom(bDay,bMonth,form.age)
+      if(!y){showToast("Preencha dia, mês e idade","error");return}
+      birthDate=`${y}-${String(bMonth).padStart(2,"0")}-${String(bDay).padStart(2,"0")}`
+    }
+    const idade=birthDate?calcAge(birthDate):(parseInt(form.age)||null)
+    const payload={name:form.name.trim().toUpperCase(),cpf:cpfNorm||null,age:idade,birth_date:birthDate,gender:form.gender,phone:form.phone,email:form.email,neighborhood:form.neighborhood,cell_id:form.cell_id||null,status:form.status,role:"member",baptized:form.baptized,baptism_date:form.baptized&&form.baptism_date?form.baptism_date:null,invited_by:form.invited_by,father_name:form.father_name,mother_name:form.mother_name,spouse_name:form.spouse_name,photo_url:form.photo_url,church_member:form.church_member||false}
     if(editing){
       const{error}=await supabase.from("members").update(payload).eq("id",editing)
       if(error){showToast("Erro: "+error.message,"error");return}
@@ -1879,7 +1905,7 @@ function MembersPanel({session,showToast}){
       }else{showToast("Visitante cadastrado!")}
       await addLog(session,"create",`Cadastro criado: ${form.name}`)
     }
-    setModal(false);setEditing(null);setForm(emptyForm)
+    setModal(false);setEditing(null);setForm(emptyForm);setBirthMode("full");setBDay("");setBMonth("")
   }
 
   async function del(){
@@ -1928,7 +1954,7 @@ function MembersPanel({session,showToast}){
         </div>
         <div style={{display:"flex",gap:6}}>
           {totalInactive>0&&<button onClick={()=>{setShowInactive(p=>!p);setFilterStatus("")}} style={{background:showInactive?"#fee2e2":"#f1f5f9",border:`1.5px solid ${showInactive?C.danger:"#e2e8f0"}`,borderRadius:10,padding:"7px 12px",cursor:"pointer",color:showInactive?C.danger:"#64748b",fontSize:12,fontWeight:700}}>{showInactive?"← Ativos":"Ver Inativos"}</button>}
-          {!showInactive&&<Btn icon="plus" size="sm" onClick={()=>{setForm(emptyForm);setEditing(null);setModal(true)}}>Novo</Btn>}
+          {!showInactive&&<Btn icon="plus" size="sm" onClick={()=>{setForm(emptyForm);setBirthMode("full");setBDay("");setBMonth("");setEditing(null);setModal(true)}}>Novo</Btn>}
         </div>
       </div>
 
@@ -2004,9 +2030,43 @@ function MembersPanel({session,showToast}){
         <Inp label="Nome Completo" value={form.name} onChange={v=>f("name")(v.toUpperCase())} required/>
         <Sel label="Status" value={form.status} onChange={f("status")} options={STATUS_LIST.map(s=>({value:s,label:s}))}/>
         <Inp label={form.status==="Membro"?"CPF (opcional — necessário para líderes/secretários)":"CPF (opcional)"} value={form.cpf} onChange={v=>f("cpf")(fmtCPF(v))} placeholder="000.000.000-00"/>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-          <Inp label="Data de Nascimento" type="date" value={form.birth_date} onChange={v=>{f("birth_date")(v);f("age")(calcAge(v)||"")}}/>
-          <Inp label="Idade" value={form.birth_date?(calcAge(form.birth_date)??""):form.age} onChange={f("age")} type="number" readOnly={!!form.birth_date}/>
+        <div style={{marginBottom:14}}>
+          <label style={{display:"block",fontSize:11,fontWeight:700,color:"#64748b",marginBottom:6,letterSpacing:"0.05em",textTransform:"uppercase"}}>Nascimento / Idade</label>
+          <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap"}}>
+            {[["full","Sei a data completa"],["daymonth","Sei só o dia e o mês"],["age","Sei só a idade"]].map(([v,lbl])=>(
+              <button key={v} type="button" onClick={()=>{setBirthMode(v);f("birth_date")("")}}
+                style={{border:birthMode===v?`1.5px solid ${C.primary}`:"1.5px solid #e2e8f0",background:birthMode===v?C.primary+"12":"#fff",color:birthMode===v?C.primary:"#64748b",borderRadius:20,padding:"6px 12px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Outfit',sans-serif"}}>{lbl}</button>
+            ))}
+          </div>
+
+          {birthMode==="full"&&(
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <Inp label="Data de Nascimento" type="date" value={form.birth_date} onChange={v=>{f("birth_date")(v);f("age")(calcAge(v)??"")}}/>
+              <Inp label="Idade" value={form.birth_date?(calcAge(form.birth_date)??""):""} onChange={()=>{}} type="number" readOnly hint="calculada sozinha"/>
+            </div>
+          )}
+
+          {birthMode==="daymonth"&&(
+            <div>
+              <div style={{display:"grid",gridTemplateColumns:"80px 1fr 90px",gap:10}}>
+                <Inp label="Dia" type="number" value={bDay} onChange={setBDay} placeholder="15"/>
+                <Sel label="Mês" value={bMonth} onChange={setBMonth} options={[{value:"",label:"Escolha..."},...MESES.map((m,i)=>({value:String(i+1),label:m}))]}/>
+                <Inp label="Idade hoje" type="number" value={form.age} onChange={f("age")} placeholder="7"/>
+              </div>
+              {(()=>{
+                const y=birthYearFrom(bDay,bMonth,form.age)
+                if(!y)return<p style={{fontSize:12,color:"#94a3b8",margin:"0 0 2px"}}>Preencha o dia, o mês e a idade que a pessoa tem hoje — o sistema descobre o ano sozinho.</p>
+                return<div style={{background:"#ecfdf5",border:"1px solid #a7f3d0",borderRadius:10,padding:"8px 12px",fontSize:12.5,color:"#065f46",fontWeight:600}}>✓ Nasceu em <b>{String(bDay).padStart(2,"0")}/{String(bMonth).padStart(2,"0")}/{y}</b> — vai aparecer nos aniversariantes.</div>
+              })()}
+            </div>
+          )}
+
+          {birthMode==="age"&&(
+            <div>
+              <div style={{maxWidth:140}}><Inp label="Idade" type="number" value={form.age} onChange={f("age")} placeholder="7"/></div>
+              <p style={{fontSize:11.5,color:"#b45309",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:10,padding:"8px 12px",margin:0}}>⚠️ Sem data de nascimento a pessoa não entra na lista de aniversariantes, e esta idade não se atualiza sozinha. Se descobrir o dia e o mês depois, é só editar aqui.</p>
+            </div>
+          )}
         </div>
         <Sel label="Sexo" value={form.gender} onChange={f("gender")} options={["Masculino","Feminino"].map(s=>({value:s,label:s}))}/>
         <Inp label="Telefone (WhatsApp)" value={form.phone} onChange={v=>f("phone")(fmtPhone(v))} placeholder="(00) 00000-0000"/>
