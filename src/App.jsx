@@ -33,14 +33,24 @@ function parseDate(str){
   return new Date(y,m-1,d)
 }
 function calcAge(dob){if(!dob)return null;const b=parseDate(dob),n=new Date();let a=n.getFullYear()-b.getFullYear();if(n.getMonth()<b.getMonth()||(n.getMonth()===b.getMonth()&&n.getDate()<b.getDate()))a--;return a}
+// Idade SEMPRE recalculada da data de nascimento. A coluna "age" do banco é só um retrato
+// da época do cadastro e desatualiza sozinha — usar só como reserva de quem não tem data.
+function ageOf(m){if(!m)return null;if(m.birth_date)return calcAge(m.birth_date);return m.age||null}
+// Idade que a pessoa COMPLETA no aniversário deste ano
+function ageTurning(dob){if(!dob)return null;return new Date().getFullYear()-parseDate(dob).getFullYear()}
 function fmtCPF(v){const d=v.replace(/\D/g,"");if(d.length>9)return d.slice(0,3)+"."+d.slice(3,6)+"."+d.slice(6,9)+"-"+d.slice(9,11);if(d.length>6)return d.slice(0,3)+"."+d.slice(3,6)+"."+d.slice(6);if(d.length>3)return d.slice(0,3)+"."+d.slice(3);return d}
 function fmtPhone(v){const d=v.replace(/\D/g,"");if(d.length>10)return`(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7,11)}`;if(d.length>6)return`(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}`;if(d.length>2)return`(${d.slice(0,2)}) ${d.slice(2)}`;return d}
-function todayStr(){return new Date().toISOString().split("T")[0]}
+// Data local no formato YYYY-MM-DD. NÃO usar toISOString: ele converte pra UTC e, depois
+// das 21h no Brasil, joga a data pro dia seguinte (célula à noite virava o dia errado).
+function toISO(d){return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`}
+function todayStr(){return toISO(new Date())}
 function btoa64(s){return btoa(unescape(encodeURIComponent(s)))}
 function atob64(s){try{return decodeURIComponent(escape(atob(s)))}catch{return s}}
 function getMonthBirthday(dob){if(!dob)return null;return parseInt(dob.split("-")[1])}
 function getCurrentMonth(){return new Date().getMonth()+1}
-function getCurrentWeekDates(){const n=new Date();const day=n.getDay();const mon=new Date(n);mon.setDate(n.getDate()-(day===0?6:day-1));const sun=new Date(mon);sun.setDate(mon.getDate()+6);return{start:mon,end:sun}}
+// start/end zerados na meia-noite: senão o aniversariante do próprio dia de início
+// da semana ficava "antes" do início e sumia da lista.
+function getCurrentWeekDates(){const n=new Date();const day=n.getDay();const mon=new Date(n);mon.setDate(n.getDate()-(day===0?6:day-1));mon.setHours(0,0,0,0);const sun=new Date(mon);sun.setDate(mon.getDate()+6);sun.setHours(23,59,59,999);return{start:mon,end:sun}}
 function getNextMeetingDate(day){
   const dayMap={"Segunda":1,"Terça":2,"Quarta":3,"Quinta":4,"Sexta":5,"Sábado":6,"Domingo":0}
   const target=dayMap[day]??3
@@ -48,15 +58,14 @@ function getNextMeetingDate(day){
   const diff=(target-today.getDay()+7)%7
   const next=new Date(today)
   next.setDate(today.getDate()+(diff===0?7:diff))
-  return next.toISOString().split("T")[0]
+  return toISO(next)
 }
 function getWeekRange(date=new Date()){
   const d=new Date(date)
   const day=d.getDay() // 0=Sun
   const sun=new Date(d);sun.setDate(d.getDate()-day)
   const sat=new Date(sun);sat.setDate(sun.getDate()+6)
-  const fmt=d=>d.toISOString().split("T")[0]
-  return{start:fmt(sun),end:fmt(sat)}
+  return{start:toISO(sun),end:toISO(sat)}
 }
 
 function isCurrentWeek(weekStart,weekEnd){
@@ -1123,7 +1132,7 @@ function MemberProfile({session,showToast}){
           <div><div style={{fontSize:17,fontWeight:800,color:"#0f172a"}}>{member.name}</div><div style={{fontSize:12,color:"#64748b"}}>{cell?.name||"Sem célula"} • {member.status}</div></div>
         </div>
         <h3 style={{fontSize:13,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:".05em",marginBottom:10}}>Informações Pessoais</h3>
-        {[["Telefone",member.phone],["E-mail",member.email],["Bairro",member.neighborhood],["Batizado",member.baptized?`✓ Sim${member.baptism_date?` (${fmtDate(member.baptism_date)})`:""}`:member.baptized===false?"✗ Não":"—"],["Nascimento",fmtDate(member.birth_date)],["Idade",member.age?`${member.age} anos`:null]].map(([k,v])=>v?(
+        {[["Telefone",member.phone],["E-mail",member.email],["Bairro",member.neighborhood],["Batizado",member.baptized?`✓ Sim${member.baptism_date?` (${fmtDate(member.baptism_date)})`:""}`:member.baptized===false?"✗ Não":"—"],["Nascimento",fmtDate(member.birth_date)],["Idade",ageOf(member)?`${ageOf(member)} anos`:null]].map(([k,v])=>v?(
           <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #f1f5f9",fontSize:13}}>
             <span style={{color:"#94a3b8",fontWeight:600}}>{k}</span>
             <span style={{color:"#334155",fontWeight:700,textAlign:"right",maxWidth:"60%"}}>{v}</span>
@@ -1235,8 +1244,8 @@ function AdminOverview({session,showToast,setTab}){
   const pendingPrayers=prayers.filter(p=>p.status==="pending").length
 
   // Attendance stats last 30 days
-  const thirtyDaysAgo=new Date();thirtyDaysAgo.setDate(thirtyDaysAgo.getDate()-30)
-  const recentAtt=attendance.filter(a=>new Date(a.date)>=thirtyDaysAgo)
+  const thirtyDaysAgo=new Date();thirtyDaysAgo.setDate(thirtyDaysAgo.getDate()-30);thirtyDaysAgo.setHours(0,0,0,0)
+  const recentAtt=attendance.filter(a=>a.date&&parseDate(a.date)>=thirtyDaysAgo)
   const recentPresent=recentAtt.filter(a=>a.status==="Presente").length
   const recentTotal=recentAtt.length
   const avgFreq=recentTotal>0?Math.round(recentPresent/recentTotal*100):0
@@ -1307,7 +1316,7 @@ function AdminOverview({session,showToast,setTab}){
       const sat=new Date(sun)
       sat.setDate(sun.getDate()+6)
       sat.setHours(23,59,59,999)
-      const wAtt=attendance.filter(a=>{const d=new Date(a.date);return d>=sun&&d<=sat})
+      const wAtt=attendance.filter(a=>{if(!a.date)return false;const d=parseDate(a.date);return d>=sun&&d<=sat})
       const pct=wAtt.length>0?Math.round(wAtt.filter(a=>a.status==="Presente").length/wAtt.length*100):null
       const label=`${String(sun.getDate()).padStart(2,"0")}/${String(sun.getMonth()+1).padStart(2,"0")}`
       weeks.push({label,pct})
@@ -1895,7 +1904,7 @@ function MembersPanel({session,showToast}){
     const matchStatus=!filterStatus||m.status===filterStatus
     const matchCell=!filterCell||(filterCell==="sem_celula"?!m.cell_id:m.cell_id===filterCell)
     const matchAge=!filterAge||(()=>{
-      const a=m.age;if(!a)return false
+      const a=ageOf(m);if(!a)return false
       if(filterAge==="crianca")return a<=10
       if(filterAge==="adolescente")return a>=11&&a<=15
       if(filterAge==="jovem")return a>=16&&a<=22
@@ -1963,8 +1972,8 @@ function MembersPanel({session,showToast}){
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:14,fontWeight:700,color:isInativo?"#94a3b8":"#0f172a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.name}</div>
                 <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
-                  <span style={{fontSize:11,color:"#94a3b8"}}>{cell?.name||"Sem célula"}{m.age?` • ${m.age} anos`:""}</span>
-                  {m.age&&!isInativo&&getAgeGroup(m.age)&&<span style={{fontSize:10,fontWeight:700,color:getAgeGroup(m.age).color,background:getAgeGroup(m.age).color+"15",borderRadius:6,padding:"1px 6px"}}>{getAgeGroup(m.age).label}</span>}
+                  <span style={{fontSize:11,color:"#94a3b8"}}>{cell?.name||"Sem célula"}{ageOf(m)?` • ${ageOf(m)} anos`:""}</span>
+                  {ageOf(m)&&!isInativo&&getAgeGroup(ageOf(m))&&<span style={{fontSize:10,fontWeight:700,color:getAgeGroup(ageOf(m)).color,background:getAgeGroup(ageOf(m)).color+"15",borderRadius:6,padding:"1px 6px"}}>{getAgeGroup(ageOf(m)).label}</span>}
                   {isInativo&&m.inactivated_at&&<span style={{fontSize:10,color:"#94a3b8"}}>Inativado em {fmtDate(m.inactivated_at?.split("T")[0])}</span>}
                 </div>
                 {isInativo&&m.inactive_reason&&<div style={{fontSize:11,color:"#ef4444",marginTop:2}}>Motivo: {m.inactive_reason}</div>}
@@ -1997,7 +2006,7 @@ function MembersPanel({session,showToast}){
         <Inp label={form.status==="Membro"?"CPF (opcional — necessário para líderes/secretários)":"CPF (opcional)"} value={form.cpf} onChange={v=>f("cpf")(fmtCPF(v))} placeholder="000.000.000-00"/>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
           <Inp label="Data de Nascimento" type="date" value={form.birth_date} onChange={v=>{f("birth_date")(v);f("age")(calcAge(v)||"")}}/>
-          <Inp label="Idade" value={form.age} onChange={f("age")} type="number" readOnly={!!form.birth_date}/>
+          <Inp label="Idade" value={form.birth_date?(calcAge(form.birth_date)??""):form.age} onChange={f("age")} type="number" readOnly={!!form.birth_date}/>
         </div>
         <Sel label="Sexo" value={form.gender} onChange={f("gender")} options={["Masculino","Feminino"].map(s=>({value:s,label:s}))}/>
         <Inp label="Telefone (WhatsApp)" value={form.phone} onChange={v=>f("phone")(fmtPhone(v))} placeholder="(00) 00000-0000"/>
@@ -3438,12 +3447,12 @@ function ReportsPanel({session}){
     const base=cellFilter?baseMembers.filter(m=>m.cell_id===cellFilter):baseMembers
     const ativos=base.filter(m=>m.status==="Membro")
     const faixas=[
-      {label:"Crianças (0–10)",color:"#06b6d4",count:ativos.filter(m=>m.age&&m.age<=10).length},
-      {label:"Adolescentes (11–15)",color:"#8b5cf6",count:ativos.filter(m=>m.age&&m.age>=11&&m.age<=15).length},
-      {label:"Jovens (16–22)",color:"#10b981",count:ativos.filter(m=>m.age&&m.age>=16&&m.age<=22).length},
-      {label:"Adultos (23–59)",color:C.primary,count:ativos.filter(m=>m.age&&m.age>=23&&m.age<=59).length},
-      {label:"60+",color:C.gold,count:ativos.filter(m=>m.age&&m.age>=60).length},
-      {label:"Sem idade cadastrada",color:"#94a3b8",count:ativos.filter(m=>!m.age).length},
+      {label:"Crianças (0–10)",color:"#06b6d4",count:ativos.filter(m=>ageOf(m)&&ageOf(m)<=10).length},
+      {label:"Adolescentes (11–15)",color:"#8b5cf6",count:ativos.filter(m=>ageOf(m)>=11&&ageOf(m)<=15).length},
+      {label:"Jovens (16–22)",color:"#10b981",count:ativos.filter(m=>ageOf(m)>=16&&ageOf(m)<=22).length},
+      {label:"Adultos (23–59)",color:C.primary,count:ativos.filter(m=>ageOf(m)>=23&&ageOf(m)<=59).length},
+      {label:"60+",color:C.gold,count:ativos.filter(m=>ageOf(m)>=60).length},
+      {label:"Sem idade cadastrada",color:"#94a3b8",count:ativos.filter(m=>!ageOf(m)).length},
     ].filter(f=>f.count>0)
     const total=ativos.length
 
@@ -4188,7 +4197,7 @@ function MemberPortal({session,logout,showToast}){
           <div>
             <Card style={{marginBottom:12}}>
               <h3 style={{fontSize:14,fontWeight:800,color:"#0f172a",marginBottom:14}}>Informações Pessoais</h3>
-              {[["Telefone",member.phone],["E-mail",member.email],["Bairro",member.neighborhood],["Status",member.status],["Batizado",member.baptized?`✓ Sim${member.baptism_date?` (${fmtDate(member.baptism_date)})`:""}`:member.baptized===false?"✗ Não":"—"],["Nascimento",fmtDate(member.birth_date)],["Idade",member.age?`${member.age} anos`:null]].map(([k,v])=>v?(
+              {[["Telefone",member.phone],["E-mail",member.email],["Bairro",member.neighborhood],["Status",member.status],["Batizado",member.baptized?`✓ Sim${member.baptism_date?` (${fmtDate(member.baptism_date)})`:""}`:member.baptized===false?"✗ Não":"—"],["Nascimento",fmtDate(member.birth_date)],["Idade",ageOf(member)?`${ageOf(member)} anos`:null]].map(([k,v])=>v?(
                 <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #f1f5f9",fontSize:13}}>
                   <span style={{color:"#94a3b8",fontWeight:600}}>{k}</span>
                   <span style={{color:"#334155",fontWeight:700,textAlign:"right",maxWidth:"60%"}}>{v}</span>
@@ -4386,7 +4395,7 @@ function MemberPortal({session,logout,showToast}){
                             {isToday&&<div style={{fontSize:10,fontWeight:800,color:C.gold,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:2}}>🎉 Hoje!</div>}
                             <div style={{fontSize:14,fontWeight:800,color:"#0f172a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.name}</div>
                             <div style={{fontSize:12,color:"#92400e",fontWeight:600}}>{isToday?"Parabéns! 🎂":`${dayName}, ${dayNum}/${monthNum}`}</div>
-                            {m.age&&<div style={{fontSize:11,color:"#b45309"}}>Completa {m.age+1} anos</div>}
+                            {ageTurning(m.birth_date)&&<div style={{fontSize:11,color:"#b45309"}}>Completa {ageTurning(m.birth_date)} anos</div>}
                           </div>
                           {wppLink&&(
                             <a href={wppLink} target="_blank" rel="noopener noreferrer" style={{background:"#25d366",borderRadius:12,padding:"8px 12px",display:"flex",alignItems:"center",gap:5,color:"#fff",textDecoration:"none",fontSize:12,fontWeight:700,flexShrink:0}}>
@@ -4406,7 +4415,7 @@ function MemberPortal({session,logout,showToast}){
               const currentMonth=getCurrentMonth()
               const monthNames=["","Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
               const monthBdays=[...cellMembers,...cellVisitors].filter(m=>m.birth_date&&getMonthBirthday(m.birth_date)===currentMonth)
-                .sort((a,b)=>parseDate(a.birth_date).getDate()-new Date(b.birth_date).getDate())
+                .sort((a,b)=>parseDate(a.birth_date).getDate()-parseDate(b.birth_date).getDate())
               return(
                 <div>
                   <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
@@ -4436,7 +4445,7 @@ function MemberPortal({session,logout,showToast}){
                         <Avatar name={m.name} photo={m.photo_url} size={34} color={C.primary}/>
                         <div style={{flex:1,minWidth:0}}>
                           <div style={{fontSize:13,fontWeight:700,color:"#0f172a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.name}</div>
-                          <div style={{fontSize:11,color:"#64748b"}}>{isThisWeek?"🎉 Esta semana!":fmtDate(m.birth_date)}{m.age?` • ${m.age+1} anos`:""}</div>
+                          <div style={{fontSize:11,color:"#64748b"}}>{isThisWeek?"🎉 Esta semana!":fmtDate(m.birth_date)}{ageTurning(m.birth_date)?` • ${ageTurning(m.birth_date)} anos`:""}</div>
                         </div>
                         {wppLink&&(
                           <a href={wppLink} target="_blank" rel="noopener noreferrer" style={{background:"#dcfce7",borderRadius:8,padding:"5px 8px",display:"flex",alignItems:"center",gap:4,color:"#166534",textDecoration:"none",fontSize:11,fontWeight:700,flexShrink:0}}>
