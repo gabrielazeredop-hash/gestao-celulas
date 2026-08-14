@@ -49,6 +49,16 @@ function birthYearFrom(day,month,age){
   return n.getFullYear()-a-(passou?0:1)
 }
 const MESES=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
+// Uma presença por pessoa/dia/célula. Protege as contas caso sobre linha repetida no banco.
+function dedupeAtt(list){
+  const seen=new Set(),out=[]
+  for(const a of list||[]){
+    const k=`${a.date}|${a.cell_id||"geral"}|${a.member_id}`
+    if(seen.has(k))continue
+    seen.add(k);out.push(a)
+  }
+  return out
+}
 function fmtCPF(v){const d=v.replace(/\D/g,"");if(d.length>9)return d.slice(0,3)+"."+d.slice(3,6)+"."+d.slice(6,9)+"-"+d.slice(9,11);if(d.length>6)return d.slice(0,3)+"."+d.slice(3,6)+"."+d.slice(6);if(d.length>3)return d.slice(0,3)+"."+d.slice(3);return d}
 function fmtPhone(v){const d=v.replace(/\D/g,"");if(d.length>10)return`(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7,11)}`;if(d.length>6)return`(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}`;if(d.length>2)return`(${d.slice(0,2)}) ${d.slice(2)}`;return d}
 // Data local no formato YYYY-MM-DD. NÃO usar toISOString: ele converte pra UTC e, depois
@@ -1072,7 +1082,7 @@ function SupervisorCells({session}){
 function MemberHome({session,showToast}){
   const{data:cells}=useTable("cells")
   const{data:members}=useTable("members")
-  const{data:attendance}=useTable("attendance")
+  const{data:attendanceRaw}=useTable("attendance");const attendance=dedupeAtt(attendanceRaw)
   const member=members.find(m=>m.id===session.member_id)
   const cell=member?cells.find(c=>c.id===member.cell_id):null
   const cellMembers=cell?members.filter(m=>m.cell_id===cell.id&&m.status==="Membro"):[]
@@ -1244,7 +1254,7 @@ function AdminOverview({session,showToast,setTab}){
   const{data:cellReqs}=useTable("cell_change_requests")
   const{data:prayers}=useTable("prayer_requests")
   const{data:meetings}=useTable("meetings")
-  const{data:attendance}=useTable("attendance")
+  const{data:attendanceRaw}=useTable("attendance");const attendance=dedupeAtt(attendanceRaw)
 
   const activeMembers=members.filter(m=>m.status==="Membro")
   const visitors=members.filter(m=>m.status==="Visitante")
@@ -2238,7 +2248,7 @@ function MeetingsPanel({session,showToast}){
   const{data:meetings,loading,reload}=useTable("meetings")
   const{data:cells}=useTable("cells")
   const{data:members}=useTable("members")
-  const{data:attendance}=useTable("attendance")
+  const{data:attendanceRaw}=useTable("attendance");const attendance=dedupeAtt(attendanceRaw)
   const{data:comments}=useTable("meeting_comments")
   // step: "form" | "attendance"
   const[step,setStep]=useState(null) // null = closed
@@ -2257,6 +2267,9 @@ function MeetingsPanel({session,showToast}){
   const{data:allSongs}=useTable("songs")
   const[saving,setSaving]=useState(false)
   const[cellFilter,setCellFilter]=useState("")
+  // Travas síncronas contra clique repetido (ver comentário em saveAttendance)
+  const savingFormRef=useRef(false)
+  const savingAttRef=useRef(false)
 
   const emptyForm={cell_id:session?.cell_id||"",date:todayStr(),theme:"",theme_youth:"",preachers:["",""],songs:"",photos_link:"",is_general:false}
   const[form,setForm]=useState(emptyForm)
@@ -2277,59 +2290,89 @@ function MeetingsPanel({session,showToast}){
   }
 
   async function saveForm(){
+    if(savingFormRef.current)return
     if(!form.date){showToast("Data obrigatória","error");return}
     if(!form.is_general&&!form.cell_id){showToast("Selecione a célula","error");return}
+    savingFormRef.current=true
     setSaving(true)
-    const payload={cell_id:form.is_general?null:form.cell_id||null,date:form.date,theme:form.theme,theme_youth:form.theme_youth,songs:form.songs,photos_link:form.photos_link,is_general:form.is_general,created_by:session.id,preacher:JSON.stringify(form.preachers.filter(p=>p.trim()))}
-    if(editing){
-      const{error}=await supabase.from("meetings").update(payload).eq("id",editing)
-      if(error){showToast("Erro ao salvar: "+error.message,"error");setSaving(false);return}
-      const cellName=cells.find(c=>c.id===form.cell_id)?.name||"Celulão"
-      await addLog(session,"update",`Encontro editado: ${cellName} — ${form.date}`)
-      showToast("Encontro atualizado!")
-      setStep(null);setEditing(null)
-    }else{
-      const{data:newMeeting,error}=await supabase.from("meetings").insert(payload).select().single()
-      if(error||!newMeeting){showToast("Erro ao criar encontro: "+(error?.message||"tente novamente"),"error");setSaving(false);return}
-      if(newMeeting&&form.cell_id&&!form.is_general){
-        const cell=cells.find(c=>c.id===form.cell_id)
-        if(cell?.auto_create_meetings)await supabase.from("cells").update({next_meeting_date:getNextMeetingDate(cell.day)}).eq("id",form.cell_id)
+    try{
+      const payload={cell_id:form.is_general?null:form.cell_id||null,date:form.date,theme:form.theme,theme_youth:form.theme_youth,songs:form.songs,photos_link:form.photos_link,is_general:form.is_general,created_by:session.id,preacher:JSON.stringify(form.preachers.filter(p=>p.trim()))}
+      if(editing){
+        const{error}=await supabase.from("meetings").update(payload).eq("id",editing)
+        if(error){showToast("Erro ao salvar: "+error.message,"error");return}
+        const cellName=cells.find(c=>c.id===form.cell_id)?.name||"Celulão"
+        await addLog(session,"update",`Encontro editado: ${cellName} — ${form.date}`)
+        showToast("Encontro atualizado!")
+        setStep(null);setEditing(null)
+      }else{
+        // Se já existe encontro dessa célula nessa data, reaproveita em vez de criar outro.
+        const jaExiste=meetings.find(m=>m.date===form.date&&(form.is_general?m.is_general:m.cell_id===form.cell_id))
+        if(jaExiste){
+          setSavedMeeting(jaExiste)
+          showToast("Já havia um encontro nessa data — abrindo a chamada dele.")
+          setStep("attendance")
+          return
+        }
+        const{data:newMeeting,error}=await supabase.from("meetings").insert(payload).select().single()
+        if(error||!newMeeting){showToast("Erro ao criar encontro: "+(error?.message||"tente novamente"),"error");return}
+        if(form.cell_id&&!form.is_general){
+          const cell=cells.find(c=>c.id===form.cell_id)
+          if(cell?.auto_create_meetings)await supabase.from("cells").update({next_meeting_date:getNextMeetingDate(cell.day)}).eq("id",form.cell_id)
+        }
+        const cellName=cells.find(c=>c.id===form.cell_id)?.name||"Celulão"
+        await addLog(session,"create",`Encontro registrado: ${cellName} — ${form.date}`)
+        setSavedMeeting(newMeeting)
+        showToast("Encontro criado! Agora faça a chamada 👇")
+        setStep("attendance") // go straight to attendance
       }
-      const cellName=cells.find(c=>c.id===form.cell_id)?.name||"Celulão"
-      await addLog(session,"create",`Encontro registrado: ${cellName} — ${form.date}`)
-      setSavedMeeting(newMeeting)
-      showToast("Encontro criado! Agora faça a chamada 👇")
-      setStep("attendance") // go straight to attendance
-    }
-    setSaving(false);reload()
+      reload()
+    }finally{savingFormRef.current=false;setSaving(false)}
   }
 
+  // savingAttRef: trava síncrona contra clique repetido. O "saving" do useState só vale no
+  // próximo render, e dois toques rápidos rodavam a gravação em paralelo — cada uma achava
+  // a chamada vazia e inseria tudo de novo (foi assim que uma célula de 18 pessoas acabou
+  // com 108 linhas de presença).
   async function saveAttendance(){
+    if(savingAttRef.current)return
     const meeting=savedMeeting||meetings.find(m=>m.id===editing)
     if(!meeting){setStep(null);return}
-    const cellId=meeting.cell_id
-    const isGeneral=meeting.is_general
-    const targetMembers=isGeneral?members.filter(m=>m.status==="Membro"||m.status==="Visitante"):members.filter(m=>m.cell_id===cellId&&(m.status==="Membro"||m.status==="Visitante"))
-    const{data:existing}=await supabase.from("attendance").select("id,member_id,status").eq("date",meeting.date).eq("cell_id",cellId||"")
-    const existingMap={}
-    ;(existing||[]).forEach(e=>{existingMap[e.member_id]={id:e.id,status:e.status}})
-    const toInsert=[]
-    const toUpdate=[]
-    for(const m of targetMembers){
-      const prev=existingMap[m.id]
-      const st=marks[m.id]||(prev?.status)||"Ausente"
-      if(prev){
-        if(marks[m.id]&&marks[m.id]!==prev.status) toUpdate.push({id:prev.id,status:st})
-      }else{
-        toInsert.push({member_id:m.id,member_name:m.name,cell_id:cellId,date:meeting.date,theme:meeting.theme,preacher:meeting.preacher,songs:meeting.songs,photos_link:meeting.photos_link,status:st,recorded_by:session.id})
+    savingAttRef.current=true;setSaving(true)
+    try{
+      const cellId=meeting.cell_id
+      const isGeneral=meeting.is_general
+      const targetMembers=isGeneral?members.filter(m=>m.status==="Membro"||m.status==="Visitante"):members.filter(m=>m.cell_id===cellId&&(m.status==="Membro"||m.status==="Visitante"))
+      let q=supabase.from("attendance").select("id,member_id,status").eq("date",meeting.date)
+      q=cellId?q.eq("cell_id",cellId):q.is("cell_id",null)
+      const{data:existing,error:selErr}=await q
+      if(selErr){showToast("Erro ao ler a chamada: "+selErr.message,"error");return}
+      // Se já houver linha repetida da mesma pessoa, fica a mais antiga e as sobras são apagadas.
+      const existingMap={},extras=[]
+      ;(existing||[]).forEach(e=>{
+        if(existingMap[e.member_id])extras.push(e.id)
+        else existingMap[e.member_id]={id:e.id,status:e.status}
+      })
+      const toInsert=[]
+      const toUpdate=[]
+      for(const m of targetMembers){
+        const prev=existingMap[m.id]
+        const st=marks[m.id]||(prev?.status)||"Ausente"
+        if(prev){
+          if(marks[m.id]&&marks[m.id]!==prev.status) toUpdate.push({id:prev.id,status:st})
+        }else{
+          toInsert.push({member_id:m.id,member_name:m.name,cell_id:cellId,date:meeting.date,theme:meeting.theme,preacher:meeting.preacher,songs:meeting.songs,photos_link:meeting.photos_link,status:st,recorded_by:session.id})
+        }
       }
-    }
-    await Promise.all([
-      toInsert.length>0?supabase.from("attendance").insert(toInsert):Promise.resolve(),
-      ...toUpdate.map(u=>supabase.from("attendance").update({status:u.status}).eq("id",u.id))
-    ])
-    showToast("Presença salva! ✓")
-    setStep(null);setMarks({});setSavedMeeting(null)
+      const results=await Promise.all([
+        toInsert.length>0?supabase.from("attendance").insert(toInsert):Promise.resolve({}),
+        extras.length>0?supabase.from("attendance").delete().in("id",extras):Promise.resolve({}),
+        ...toUpdate.map(u=>supabase.from("attendance").update({status:u.status}).eq("id",u.id))
+      ])
+      const err=results.find(r=>r&&r.error)?.error
+      if(err){showToast("Erro ao salvar a chamada: "+err.message,"error");return}
+      showToast("Presença salva! ✓")
+      setStep(null);setMarks({});setSavedMeeting(null)
+    }finally{savingAttRef.current=false;setSaving(false)}
   }
 
   function skipAttendance(){setStep(null);setMarks({});setSavedMeeting(null)}
@@ -2357,7 +2400,8 @@ function MeetingsPanel({session,showToast}){
 
       {filteredMeetings.map(meeting=>{
         const cell=cells.find(c=>c.id===meeting.cell_id)
-        const meetingAtt=attendance.filter(a=>a.date===meeting.date&&(meeting.is_general||a.cell_id===meeting.cell_id))
+        // Conta 1 por pessoa: se sobrar linha repetida no banco, o número não infla.
+        const meetingAtt=dedupeAtt(attendance.filter(a=>a.date===meeting.date&&(meeting.is_general||a.cell_id===meeting.cell_id)))
         const present=meetingAtt.filter(a=>a.status==="Presente").length
         const total=meetingAtt.length
         const meetingComments=comments.filter(c=>c.attendance_date===meeting.date&&(meeting.is_general||c.cell_id===meeting.cell_id))
@@ -2494,8 +2538,8 @@ function MeetingsPanel({session,showToast}){
               })}
             </div>
             <div style={{padding:"12px 16px 24px",borderTop:"1px solid #f1f5f9",flexShrink:0,display:"flex",gap:10}}>
-              <Btn variant="ghost" onClick={skipAttendance} style={{flex:1}}>Pular</Btn>
-              <Btn onClick={saveAttendance} icon="check" style={{flex:2}}>Salvar Chamada ({presentCount} presentes)</Btn>
+              <Btn variant="ghost" onClick={skipAttendance} disabled={saving} style={{flex:1}}>Pular</Btn>
+              <Btn onClick={saveAttendance} icon="check" disabled={saving} style={{flex:2}}>{saving?"Salvando...":`Salvar Chamada (${presentCount} presentes)`}</Btn>
             </div>
           </div>
         </div>
@@ -3305,7 +3349,7 @@ function StudiesPanel({session,showToast}){
 function ReportsPanel({session}){
   const{data:members}=useTable("members")
   const{data:cells}=useTable("cells")
-  const{data:attendance}=useTable("attendance")
+  const{data:attendanceRaw}=useTable("attendance");const attendance=dedupeAtt(attendanceRaw)
   const{data:meetings}=useTable("meetings")
   const[reportTab,setReportTab]=useState("frequencia")
   const[cellFilter,setCellFilter]=useState("")
@@ -4199,7 +4243,7 @@ function MemberPortal({session,logout,showToast}){
   const[commentsModal,setCommentsModal]=useState(null)
   const{data:cells}=useTable("cells")
   const{data:members}=useTable("members")
-  const{data:attendance}=useTable("attendance")
+  const{data:attendanceRaw}=useTable("attendance");const attendance=dedupeAtt(attendanceRaw)
   const{data:prayers}=useTable("prayer_requests")
   const[showPrayerModal,setShowPrayerModal]=useState(false)
   const[prayerForm,setPrayerForm]=useState({request:"",is_private:false})
