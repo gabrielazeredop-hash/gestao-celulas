@@ -3352,6 +3352,7 @@ function ReportsPanel({session}){
   const{data:attendanceRaw}=useTable("attendance");const attendance=dedupeAtt(attendanceRaw)
   const{data:meetings}=useTable("meetings")
   const[reportTab,setReportTab]=useState("frequencia")
+  const[gerando,setGerando]=useState(false)
   const[cellFilter,setCellFilter]=useState("")
   const[sortAtt,setSortAtt]=useState("faltas") // "faltas" | "pct" | "nome"
   const[riskFilter,setRiskFilter]=useState("todos") // "todos"|"critico"|"atencao"|"ok"
@@ -3374,7 +3375,47 @@ function ReportsPanel({session}){
   }
 
   // ── RELATÓRIO 1: FREQUÊNCIA POR MEMBRO ──────────────────────────────────────
-  function ReportFrequencia(){
+  function calcCelulas(){
+    return myCells.map(c=>{
+      const mc=baseMembers.filter(m=>m.cell_id===c.id&&m.status==="Membro")
+      const vis=baseMembers.filter(m=>m.cell_id===c.id&&m.status==="Visitante")
+      const cellAtt=attendance.filter(a=>a.cell_id===c.id)
+      const cellMeetings=baseMeetings.filter(m=>m.cell_id===c.id)
+      const present=cellAtt.filter(a=>a.status==="Presente").length
+      const total=cellAtt.length
+      const pct=total>0?Math.round(present/total*100):null
+      return{...c,membros:mc.length,visitantes:vis.length,encontros:cellMeetings.length,pct,memberList:mc}
+    }).filter(c=>c.cell_status!=="Inativa").sort((a,b)=>(a.pct??-1)-(b.pct??-1))
+  }
+
+  function calcFaixas(){
+    const base=cellFilter?baseMembers.filter(m=>m.cell_id===cellFilter):baseMembers
+    const ativos=base.filter(m=>m.status==="Membro")
+    const faixas=[
+      {label:"Crianças (0 a 10)",count:ativos.filter(m=>ageOf(m)&&ageOf(m)<=10).length},
+      {label:"Adolescentes (11 a 15)",count:ativos.filter(m=>ageOf(m)>=11&&ageOf(m)<=15).length},
+      {label:"Jovens (16 a 22)",count:ativos.filter(m=>ageOf(m)>=16&&ageOf(m)<=22).length},
+      {label:"Adultos (23 a 59)",count:ativos.filter(m=>ageOf(m)>=23&&ageOf(m)<=59).length},
+      {label:"60+",count:ativos.filter(m=>ageOf(m)>=60).length},
+      {label:"Sem idade cadastrada",count:ativos.filter(m=>!ageOf(m)).length},
+    ].filter(f=>f.count>0)
+    return{faixas,total:ativos.length,ativos,
+      masc:ativos.filter(m=>m.gender==="Masculino").length,
+      fem:ativos.filter(m=>m.gender==="Feminino").length}
+  }
+
+  function calcVisitantes(){
+    const base=cellFilter?baseMembers.filter(m=>m.cell_id===cellFilter):baseMembers
+    const visitors=base.filter(m=>m.status==="Visitante")
+    return{visitors,
+      converted:base.filter(m=>m.status==="Membro"),
+      visitorsWithAtt:visitors.filter(m=>attendance.some(a=>a.member_id===m.id)),
+      batizados:base.filter(m=>m.status==="Membro"&&m.baptized),
+      aBatizar:base.filter(m=>m.status==="Membro"&&m.baptized===false),
+      naoMembros:base.filter(m=>m.status==="Membro"&&m.church_member!==true)}
+  }
+
+  function calcFrequencia(){
     // Todos os encontros ordenados por data por célula
     const meetingsByCellSorted={}
     baseMeetings.forEach(mt=>{
@@ -3437,6 +3478,11 @@ function ReportsPanel({session}){
     else if(sortAtt==="pct")rows.sort((a,b)=>(a.pct??-1)-(b.pct??-1))
     else rows.sort((a,b)=>a.name.localeCompare(b.name))
 
+    return rows
+  }
+
+  function ReportFrequencia(){
+    const rows=calcFrequencia()
     const totalRows=rows.length
     const criticos=rows.filter(m=>m.pct!==null&&m.pct<50).length
     const atencao=rows.filter(m=>m.pct!==null&&m.pct>=50&&m.pct<75).length
@@ -3551,10 +3597,10 @@ function ReportsPanel({session}){
     const base=cellFilter?baseMembers.filter(m=>m.cell_id===cellFilter):baseMembers
     const ativos=base.filter(m=>m.status==="Membro")
     const faixas=[
-      {label:"Crianças (0–10)",color:"#06b6d4",count:ativos.filter(m=>ageOf(m)&&ageOf(m)<=10).length},
-      {label:"Adolescentes (11–15)",color:"#8b5cf6",count:ativos.filter(m=>ageOf(m)>=11&&ageOf(m)<=15).length},
-      {label:"Jovens (16–22)",color:"#10b981",count:ativos.filter(m=>ageOf(m)>=16&&ageOf(m)<=22).length},
-      {label:"Adultos (23–59)",color:C.primary,count:ativos.filter(m=>ageOf(m)>=23&&ageOf(m)<=59).length},
+      {label:"Crianças (0 a 10)",color:"#06b6d4",count:ativos.filter(m=>ageOf(m)&&ageOf(m)<=10).length},
+      {label:"Adolescentes (11 a 15)",color:"#8b5cf6",count:ativos.filter(m=>ageOf(m)>=11&&ageOf(m)<=15).length},
+      {label:"Jovens (16 a 22)",color:"#10b981",count:ativos.filter(m=>ageOf(m)>=16&&ageOf(m)<=22).length},
+      {label:"Adultos (23 a 59)",color:C.primary,count:ativos.filter(m=>ageOf(m)>=23&&ageOf(m)<=59).length},
       {label:"60+",color:C.gold,count:ativos.filter(m=>ageOf(m)>=60).length},
       {label:"Sem idade cadastrada",color:"#94a3b8",count:ativos.filter(m=>!ageOf(m)).length},
     ].filter(f=>f.count>0)
@@ -3750,13 +3796,135 @@ function ReportsPanel({session}){
 
   const TAB_LABELS={frequencia:"Relatório de Frequência",celulas:"Desempenho das Células",faixas:"Faixas Etárias",visitantes:"Visitas e Conversão"}
 
-  function exportPDF(){
-    const cellName=cellFilter?cells.find(c=>c.id===cellFilter)?.name:"Toda a Igreja"
-    const title=`${TAB_LABELS[reportTab]} — ${cellName} — ${new Date().toLocaleDateString("pt-BR")}`
-    document.title=title
-    window.print()
-    setTimeout(()=>{document.title="Gestão de Células"},1000)
+  // ── PDF DE VERDADE ──────────────────────────────────────────────────────────
+  // Antes isso era window.print(), que fotografava a tela inteira (menu lateral
+  // incluso) e gastava 10 paginas. Agora o documento e montado a partir dos dados.
+  async function gerarPDF(){
+    setGerando(true)
+    try{
+      const{default:jsPDF}=await import("jspdf")
+      const{default:autoTable}=await import("jspdf-autotable")
+      const doc=new jsPDF({orientation:"portrait",unit:"mm",format:"a4"})
+      const LARG=doc.internal.pageSize.getWidth()
+      const AZUL=[27,79,138]
+      const cellName=cellFilter?cells.find(c=>c.id===cellFilter)?.name:"Toda a Igreja"
+      const hoje=new Date().toLocaleDateString("pt-BR",{day:"2-digit",month:"long",year:"numeric"})
+
+      // cabecalho da primeira pagina
+      doc.setFillColor(...AZUL);doc.rect(0,0,LARG,26,"F")
+      doc.setTextColor(255);doc.setFontSize(14);doc.setFont("helvetica","bold")
+      doc.text(TAB_LABELS[reportTab],14,12)
+      doc.setFontSize(9);doc.setFont("helvetica","normal")
+      doc.text(`Promessa Lago dos Peixes  |  ${cellName}  |  Gerado em ${hoje}`,14,19)
+      let y=34
+
+      const resumo=(itens)=>{
+        doc.setTextColor(60);doc.setFontSize(9)
+        const larg=(LARG-28)/itens.length
+        itens.forEach((it,i)=>{
+          const x=14+i*larg
+          doc.setFillColor(244,247,250);doc.roundedRect(x,y,larg-3,16,2,2,"F")
+          doc.setFont("helvetica","bold");doc.setFontSize(13);doc.setTextColor(...AZUL)
+          doc.text(String(it[1]),x+larg/2-1.5,y+7,{align:"center"})
+          doc.setFont("helvetica","normal");doc.setFontSize(7.5);doc.setTextColor(110)
+          doc.text(it[0],x+larg/2-1.5,y+12.5,{align:"center"})
+        })
+        y+=22
+      }
+
+      const tabela=(head,body)=>{
+        autoTable(doc,{
+          startY:y,head:[head],body,
+          theme:"striped",
+          styles:{fontSize:8,cellPadding:2.2,overflow:"linebreak"},
+          headStyles:{fillColor:AZUL,textColor:255,fontStyle:"bold",fontSize:8},
+          alternateRowStyles:{fillColor:[247,250,252]},
+          margin:{left:14,right:14,top:20},
+          didDrawPage:(d)=>{
+            if(d.pageNumber>1){
+              doc.setFillColor(...AZUL);doc.rect(0,0,LARG,12,"F")
+              doc.setTextColor(255);doc.setFontSize(8);doc.setFont("helvetica","bold")
+              doc.text(`${TAB_LABELS[reportTab]}  -  ${cellName}`,14,8)
+            }
+          }
+        })
+        y=doc.lastAutoTable.finalY+8
+      }
+
+      if(reportTab==="frequencia"){
+        const rows=calcFrequencia()
+        resumo([
+          ["Crítico (<50%)",rows.filter(m=>m.pct!==null&&m.pct<50).length],
+          ["Atenção (50-74%)",rows.filter(m=>m.pct!==null&&m.pct>=50&&m.pct<75).length],
+          ["Regular (75% ou +)",rows.filter(m=>m.pct!==null&&m.pct>=75).length],
+          ["Sem registro",rows.filter(m=>m.pct===null).length],
+          ["Total",rows.length],
+        ])
+        tabela(["Nome","Célula","Situação","Freq.","Presenças","Faltas","Just.","Faltas seguidas"],
+          rows.map(m=>[
+            m.name,m.cellName,
+            m.pct===null?"Sem registro":m.pct>=75?"Regular":m.pct>=50?"Atenção":"Crítico",
+            m.pct===null?"-":m.pct+"%",
+            m.att.present,m.att.absences,m.att.justified,
+            m.consecutive>0?String(m.consecutive):"-",
+          ]))
+      }
+
+      if(reportTab==="celulas"){
+        const cs=calcCelulas()
+        resumo([
+          ["Células",cs.length],
+          ["Membros",cs.reduce((s,c)=>s+c.membros,0)],
+          ["Visitantes",cs.reduce((s,c)=>s+c.visitantes,0)],
+          ["Encontros",cs.reduce((s,c)=>s+c.encontros,0)],
+        ])
+        tabela(["Célula","Dia","Hora","Bairro","Membros","Visitantes","Encontros","Frequência"],
+          cs.map(c=>[c.name,c.day||"-",c.time||"-",c.neighborhood||"-",c.membros,c.visitantes,c.encontros,c.pct!==null?c.pct+"%":"-"]))
+      }
+
+      if(reportTab==="faixas"){
+        const{faixas,total,ativos,masc,fem}=calcFaixas()
+        resumo([["Membros",total],["Masculino",masc],["Feminino",fem]])
+        tabela(["Faixa etária","Quantidade","% do total"],
+          faixas.map(f=>[f.label,f.count,total?Math.round(f.count/total*100)+"%":"0%"]))
+        doc.setFontSize(10);doc.setFont("helvetica","bold");doc.setTextColor(...AZUL)
+        doc.text("Membros por faixa etária",14,y);y+=2
+        tabela(["Nome","Célula","Idade","Sexo"],
+          [...ativos].sort((a,b)=>(ageOf(a)||0)-(ageOf(b)||0))
+            .map(m=>[m.name,cells.find(c=>c.id===m.cell_id)?.name||"Sem célula",ageOf(m)??"-",m.gender||"-"]))
+      }
+
+      if(reportTab==="visitantes"){
+        const v=calcVisitantes()
+        resumo([
+          ["Visitantes",v.visitors.length],
+          ["Voltaram 1x+",v.visitorsWithAtt.length],
+          ["Batizados",v.batizados.length],
+          ["A batizar",v.aBatizar.length],
+        ])
+        const voltou=new Set(v.visitorsWithAtt.map(m=>m.id))
+        tabela(["Visitante","Célula","Idade","Telefone","Já voltou","Convidado por"],
+          v.visitors.map(m=>[m.name,cells.find(c=>c.id===m.cell_id)?.name||"Sem célula",ageOf(m)??"-",m.phone||"-",voltou.has(m.id)?"Sim":"Não",m.invited_by||"-"]))
+      }
+
+      // rodape com numeracao em todas as paginas
+      const tot=doc.internal.getNumberOfPages()
+      for(let i=1;i<=tot;i++){
+        doc.setPage(i)
+        const alt=doc.internal.pageSize.getHeight()
+        doc.setFontSize(7.5);doc.setTextColor(150);doc.setFont("helvetica","normal")
+        doc.text("Promessa Lago dos Peixes - Gestão de Células",14,alt-8)
+        doc.text(`Página ${i} de ${tot}`,LARG-14,alt-8,{align:"right"})
+      }
+
+      const limpo=(t)=>t.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9]+/g,"-").toLowerCase()
+      doc.save(`${limpo(TAB_LABELS[reportTab])}-${limpo(cellName)}-${todayStr()}.pdf`)
+    }catch(e){
+      console.error(e)
+      alert("Nao foi possivel gerar o PDF: "+e.message)
+    }finally{setGerando(false)}
   }
+
 
   return(
     <div>
@@ -3773,9 +3941,9 @@ function ReportsPanel({session}){
 
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:10,flexWrap:"wrap"}}>
         <h2 style={{fontSize:18,fontWeight:800,color:"#0f172a",margin:0}}>Relatórios</h2>
-        <button onClick={exportPDF} className="no-print" style={{display:"flex",alignItems:"center",gap:6,padding:"8px 16px",background:"#1B4F8A",border:"none",borderRadius:10,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>
+        <button onClick={gerarPDF} disabled={gerando} className="no-print" style={{display:"flex",alignItems:"center",gap:6,padding:"8px 16px",background:"#1B4F8A",border:"none",borderRadius:10,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9,15 12,18 15,15"/></svg>
-          Exportar PDF
+          {gerando?"Gerando...":"Baixar PDF"}
         </button>
       </div>
 
