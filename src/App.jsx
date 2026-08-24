@@ -48,6 +48,7 @@ function birthYearFrom(day,month,age){
   const passou=curM>m||(curM===m&&n.getDate()>=d)
   return n.getFullYear()-a-(passou?0:1)
 }
+const SENHA_PADRAO="123456"
 const MESES=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
 // Uma presença por pessoa/dia/célula. Protege as contas caso sobre linha repetida no banco.
 function dedupeAtt(list){
@@ -1899,20 +1900,41 @@ function MembersPanel({session,showToast}){
     }
     const idade=birthDate?calcAge(birthDate):(parseInt(form.age)||null)
     const payload={name:form.name.trim().toUpperCase(),cpf:cpfNorm||null,age:idade,birth_date:birthDate,gender:form.gender,phone:form.phone,email:form.email,neighborhood:form.neighborhood,cell_id:form.cell_id||null,status:form.status,role:"member",baptized:form.baptized,baptism_date:form.baptized&&form.baptism_date?form.baptism_date:null,invited_by:form.invited_by,father_name:form.father_name,mother_name:form.mother_name,spouse_name:form.spouse_name,photo_url:form.photo_url,church_member:form.church_member||false}
+    // A conta de acesso nasce com QUALQUER contato: CPF, telefone ou e-mail.
+    // Antes exigia CPF, e como visitante quase nunca informa CPF, a pessoa ficava
+    // cadastrada mas sem senha nenhuma — a tela de login aceitava telefone, só que
+    // não existia conta para ela entrar.
+    const temContato=!!(cpfNorm||form.phone.replace(/\D/g,"")||form.email.trim())
+    // devolve "criado" | "ja tinha" | mensagem de erro
+    async function criarAcesso(memberId){
+      const{data:ja}=await supabase.from("users").select("id").eq("member_id",memberId).maybeSingle()
+      if(ja)return"ja tinha"
+      const{error}=await supabase.from("users").insert({member_id:memberId,cpf:cpfNorm||null,password_hash:btoa64(SENHA_PADRAO),name:form.name.trim().toUpperCase(),role:"member",cell_id:form.cell_id||null,active:true})
+      if(!error)return"criado"
+      // a coluna cpf da tabela users ainda e obrigatoria no banco
+      if(error.code==="23502")return"O banco ainda exige CPF para criar acesso. Cadastro salvo, mas sem login."
+      return"Cadastro salvo, mas o acesso falhou: "+error.message
+    }
+
     if(editing){
       const{error}=await supabase.from("members").update(payload).eq("id",editing)
       if(error){showToast("Erro: "+error.message,"error");return}
       if(form.spouse_name){const spouse=members.find(m=>m.name===form.spouse_name);if(spouse&&spouse.spouse_name!==form.name)await supabase.from("members").update({spouse_name:form.name}).eq("id",spouse.id)}
+      // quem ganhou um contato agora também ganha acesso
+      const r=temContato?await criarAcesso(editing):"ja tinha"
       await addLog(session,"update",`Membro atualizado: ${form.name}`)
-      showToast("Membro atualizado!")
+      if(r==="criado")showToast(`Atualizado! Acesso criado — senha ${SENHA_PADRAO}`)
+      else if(r==="ja tinha")showToast("Membro atualizado!")
+      else showToast(r,"error")
     }else{
       const{data:newM,error}=await supabase.from("members").insert(payload).select().single()
       if(error){showToast("Erro: "+error.message,"error");return}
-      if(newM&&cpfNorm){
-        await supabase.from("users").insert({member_id:newM.id,cpf:cpfNorm,password_hash:btoa64("123456"),name:form.name.trim().toUpperCase(),role:"member",cell_id:form.cell_id||null,active:true})
-        if(form.spouse_name){const spouse=members.find(m=>m.name===form.spouse_name);if(spouse)await supabase.from("members").update({spouse_name:form.name}).eq("id",spouse.id)}
-        showToast("Membro criado! Senha padrão: 123456")
-      }else{showToast("Visitante cadastrado!")}
+      if(form.spouse_name){const spouse=members.find(m=>m.name===form.spouse_name);if(spouse)await supabase.from("members").update({spouse_name:form.name}).eq("id",spouse.id)}
+      if(newM&&temContato){
+        const r=await criarAcesso(newM.id)
+        if(r==="criado"||r==="ja tinha")showToast(`Cadastrado! Acesso liberado — senha ${SENHA_PADRAO}`)
+        else showToast(r,"error")
+      }else{showToast("Cadastrado! (sem telefone, e-mail ou CPF não há acesso ao sistema)")}
       await addLog(session,"create",`Cadastro criado: ${form.name}`)
     }
     setModal(false);setEditing(null);setForm(emptyForm);setBirthMode("full");setBDay("");setBMonth("")
