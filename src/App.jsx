@@ -635,12 +635,25 @@ function LoginPage({onLogin,showToast}){
 function useTable(table,filter=null){
   const[data,setData]=useState([])
   const[loading,setLoading]=useState(true)
+  // O servidor devolve no maximo 1000 linhas por chamada. Sem paginar, a partir
+  // da linha 1001 o sistema simplesmente nao enxergava o resto — e os relatorios
+  // de frequencia ficariam errados sem dar erro nenhum.
   async function load(){
     setLoading(true)
-    let q=supabase.from(table).select("*").order("created_at",{ascending:false})
-    if(filter)q=q.eq(filter.col,filter.val)
-    const{data:rows}=await q
-    setData(rows||[]);setLoading(false)
+    const TAM=1000
+    let todas=[],de=0
+    for(;;){
+      // o desempate por id e essencial: sem ele, linhas gravadas no mesmo instante
+      // pulam entre as paginas, e a mesma linha vem duas vezes enquanto outra some
+      let q=supabase.from(table).select("*").order("created_at",{ascending:false}).order("id",{ascending:true}).range(de,de+TAM-1)
+      if(filter)q=q.eq(filter.col,filter.val)
+      const{data:rows,error}=await q
+      if(error){console.error("Falha ao carregar",table,error.message);break}
+      todas=todas.concat(rows||[])
+      if(!rows||rows.length<TAM)break
+      de+=TAM
+    }
+    setData(todas);setLoading(false)
   }
   useEffect(()=>{
     load()
