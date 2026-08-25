@@ -1882,19 +1882,27 @@ function CellsPanel({session,showToast}){
     if(!form.name.trim()){showToast("Nome é obrigatório","error");return}
     const nextDate=form.auto_create_meetings?getNextMeetingDate(form.day):null
     const payload={name:form.name.trim().toUpperCase(),day:form.day,time:form.time,neighborhood:form.neighborhood,street:form.street,number:form.number,cep:form.cep,supervisor_id:form.supervisor_id||null,started_at:form.started_at||null,growth_goal:parseInt(form.growth_goal)||0,active:form.cell_status!=="Inativa",cell_type:form.cell_type,cell_status:form.cell_status,origin_cell_id:form.origin_cell_id||null,frequency:form.frequency,reminder_hours:parseInt(form.reminder_hours)||24,reminder_channels:form.reminder_channels,auto_create_meetings:form.auto_create_meetings,next_meeting_date:nextDate,leaders_ids:form.leaders_ids,secretaries_ids:form.secretaries_ids,trainees_ids:form.trainees_ids,hosts_ids:form.hosts_ids}
+    let cellId=editing
     if(editing){
       const{error}=await supabase.from("cells").update(payload).eq("id",editing)
       if(error){showToast("Erro: "+error.message,"error");return}
       await addLog(session,"update",`Célula atualizada: ${form.name}`)
       showToast("Célula atualizada!")
     }else{
-      const{error}=await supabase.from("cells").insert(payload)
-      if(error){showToast("Erro: "+error.message,"error");return}
+      // captura o ID da célula recém-criada para vincular o líder a ELA (antes ficava sem célula)
+      const{data:nova,error}=await supabase.from("cells").insert(payload).select().single()
+      if(error||!nova){showToast("Erro: "+(error?.message||"tente de novo"),"error");return}
+      cellId=nova.id
       await addLog(session,"create",`Célula criada: ${form.name}`)
       showToast("Célula criada!")
     }
-    for(const id of form.leaders_ids)await supabase.from("users").update({role:"leader",cell_id:editing}).eq("member_id",id)
-    for(const id of form.secretaries_ids)await supabase.from("users").update({role:"secretary",cell_id:editing}).eq("member_id",id)
+    if(cellId){
+      for(const id of form.leaders_ids)await supabase.from("users").update({role:"leader",cell_id:cellId}).eq("member_id",id)
+      for(const id of form.secretaries_ids)await supabase.from("users").update({role:"secretary",cell_id:cellId}).eq("member_id",id)
+      // vínculo também na ficha da pessoa, para ela cair na célula certa
+      const vinculados=[...form.leaders_ids,...form.secretaries_ids]
+      for(const id of vinculados)await supabase.from("members").update({cell_id:cellId}).eq("id",id)
+    }
     setModal(false);setEditing(null);setForm(emptyForm)
   }
 
