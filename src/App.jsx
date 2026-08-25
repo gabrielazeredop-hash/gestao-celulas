@@ -50,6 +50,38 @@ function birthYearFrom(day,month,age){
 }
 // Listas de pessoas sao guardadas como texto JSON nas colunas do encontro
 function lerLista(v){if(!v)return[""];try{const a=JSON.parse(v);return Array.isArray(a)&&a.length?a:[""]}catch{return v?[v]:[""]}}
+// ── PARENTESCO ───────────────────────────────────────────────────────────────
+// Cada vínculo é gravado uma vez só: a linha (member_id A, relative_id B, tipo)
+// significa "B é <tipo> de A". A outra ponta é calculada na hora — assim marcar
+// que fulano é pai de alguém já faz o filho aparecer no cadastro do pai.
+const PARENTESCOS=[
+  {v:"pai",label:"Pai"},
+  {v:"mae",label:"Mãe"},
+  {v:"filho",label:"Filho(a)"},
+  {v:"conjuge",label:"Cônjuge"},
+  {v:"irmao",label:"Irmão / Irmã"},
+  {v:"avo",label:"Avô / Avó"},
+  {v:"tio",label:"Tio / Tia"},
+  {v:"primo",label:"Primo(a)"},
+]
+// Como chamar o tipo levando em conta o sexo de quem está sendo chamado assim
+function rotuloParentesco(tipo,genero){
+  const f=genero==="Feminino"
+  const m={pai:"Pai",mae:"Mãe",filho:f?"Filha":"Filho",conjuge:"Cônjuge",
+    irmao:f?"Irmã":"Irmão",avo:f?"Avó":"Avô",tio:f?"Tia":"Tio",primo:f?"Prima":"Primo",
+    neto:f?"Neta":"Neto",sobrinho:f?"Sobrinha":"Sobrinho"}
+  return m[tipo]||tipo
+}
+// "B é pai de A" visto do outro lado vira "A é filho de B" — depende do sexo de A
+function parentescoInverso(tipo,generoDoOutro){
+  const f=generoDoOutro==="Feminino"
+  if(tipo==="pai"||tipo==="mae")return "filho"
+  if(tipo==="filho")return f?"mae":"pai"
+  if(tipo==="avo")return "neto"
+  if(tipo==="tio")return "sobrinho"
+  return tipo // irmão, primo e cônjuge valem nos dois sentidos
+}
+
 const SENHA_PADRAO="123456"
 const MESES=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
 // Uma presença por pessoa/dia/célula. Protege as contas caso sobre linha repetida no banco.
@@ -706,6 +738,113 @@ const NavMes=({mes,setMes,cor="#92400e"})=>(
   </div>
 )
 
+// Lista os familiares de uma pessoa e permite ir adicionando quantos quiser.
+// Junta os dois sentidos: os vínculos criados a partir dela e os que apontam para ela.
+function familiaresDe(memberId,links,members){
+  const out=[]
+  ;(links||[]).forEach(l=>{
+    if(l.member_id===memberId){
+      const p=members.find(m=>m.id===l.relative_id)
+      if(p)out.push({linkId:l.id,pessoa:p,tipo:l.tipo,direto:true})
+    }else if(l.relative_id===memberId){
+      const p=members.find(m=>m.id===l.member_id)
+      const eu=members.find(m=>m.id===memberId)
+      if(p)out.push({linkId:l.id,pessoa:p,tipo:parentescoInverso(l.tipo,eu?.gender),direto:false})
+    }
+  })
+  const ordem={pai:1,mae:2,conjuge:3,filho:4,irmao:5,avo:6,neto:7,tio:8,sobrinho:9,primo:10}
+  return out.sort((a,b)=>(ordem[a.tipo]||99)-(ordem[b.tipo]||99)||a.pessoa.name.localeCompare(b.pessoa.name))
+}
+
+// Mostra a família de alguém (só leitura). Junta os vínculos novos com os nomes
+// soltos de pai/mãe/cônjuge que ficaram dos cadastros antigos.
+function FamiliaCard({member,members}){
+  const{data:links}=useTable("family_links")
+  const familia=familiaresDe(member.id,links,members)
+  const antigos=[["Pai",member.father_name],["Mãe",member.mother_name],["Cônjuge",member.spouse_name]]
+    .filter(([,v])=>v&&v.trim()&&!familia.some(f=>f.pessoa.name===v.trim()))
+  if(familia.length===0&&antigos.length===0)return null
+  return(
+    <Card style={{marginBottom:12}}>
+      <h3 style={{fontSize:13,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:".05em",marginBottom:10}}>Família</h3>
+      {familia.map(fa=>(
+        <div key={fa.linkId+fa.pessoa.id} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:"1px solid #f1f5f9"}}>
+          <Avatar name={fa.pessoa.name} photo={fa.pessoa.photo_url} size={28} color={C.primary}/>
+          <span style={{flex:1,fontSize:13,fontWeight:700,color:"#334155",minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{fa.pessoa.name}</span>
+          <span style={{fontSize:11,fontWeight:700,color:C.primary,flexShrink:0}}>{rotuloParentesco(fa.tipo,fa.pessoa.gender)}</span>
+        </div>
+      ))}
+      {antigos.map(([rot,nome])=>(
+        <div key={rot} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #f1f5f9",fontSize:13}}>
+          <span style={{color:"#94a3b8",fontWeight:600}}>{rot}</span><span style={{color:"#334155",fontWeight:700}}>{nome}</span>
+        </div>
+      ))}
+    </Card>
+  )
+}
+
+function FamiliaField({memberId,members,session,showToast}){
+  const{data:links,reload}=useTable("family_links")
+  const[buscando,setBuscando]=useState(false)
+  const[escolhido,setEscolhido]=useState(null)
+  const[salvando,setSalvando]=useState(false)
+  const familia=familiaresDe(memberId,links,members)
+
+  async function vincular(tipo){
+    if(!escolhido)return
+    setSalvando(true)
+    const{error}=await supabase.from("family_links").insert({member_id:memberId,relative_id:escolhido.id,tipo,created_by:session?.id||null})
+    setSalvando(false)
+    if(error){
+      showToast(error.code==="23505"?"Esse vínculo já existe":"Erro ao vincular: "+error.message,"error")
+      return
+    }
+    showToast(`${escolhido.name} vinculado(a) como ${rotuloParentesco(tipo,escolhido.gender)}`)
+    setEscolhido(null);reload()
+  }
+
+  async function remover(linkId){
+    const{error}=await supabase.from("family_links").delete().eq("id",linkId)
+    if(error){showToast("Erro ao remover: "+error.message,"error");return}
+    showToast("Vínculo removido");reload()
+  }
+
+  return(
+    <div>
+      {familia.length===0&&<p style={{fontSize:12.5,color:"#94a3b8",margin:"0 0 10px"}}>Nenhum familiar vinculado ainda.</p>}
+      {familia.map(fa=>(
+        <div key={fa.linkId+fa.pessoa.id} style={{display:"flex",alignItems:"center",gap:10,background:"#f8fafc",border:"1px solid #e8edf2",borderRadius:12,padding:"8px 12px",marginBottom:6}}>
+          <Avatar name={fa.pessoa.name} photo={fa.pessoa.photo_url} size={30} color={C.primary}/>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:700,color:"#0f172a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{fa.pessoa.name}</div>
+            <div style={{fontSize:11,color:C.primary,fontWeight:700}}>{rotuloParentesco(fa.tipo,fa.pessoa.gender)}</div>
+          </div>
+          <button type="button" onClick={()=>remover(fa.linkId)} title="Remover vínculo"
+            style={{background:"#fee2e2",border:"none",borderRadius:8,padding:6,cursor:"pointer",color:"#ef4444",display:"flex",flexShrink:0}}><Icon name="x" size={13}/></button>
+        </div>
+      ))}
+      <button type="button" onClick={()=>setBuscando(true)} style={{background:"#f8fafc",border:"1.5px dashed #cbd5e1",borderRadius:10,padding:"9px 16px",fontSize:12.5,fontWeight:700,color:"#64748b",cursor:"pointer",display:"flex",alignItems:"center",gap:6,marginTop:4}}>
+        <Icon name="plus" size={13}/>Vincular familiar
+      </button>
+
+      <MemberSearchModal open={buscando} title="Quem é o familiar?" members={members.filter(m=>m.id!==memberId)}
+        onSelect={m=>setEscolhido(m)} onClose={()=>setBuscando(false)}/>
+
+      <Modal open={!!escolhido} onClose={()=>setEscolhido(null)} title={escolhido?`${escolhido.name} é o quê?`:""}>
+        <p style={{fontSize:12.5,color:"#64748b",margin:"0 0 12px"}}>Escolha o parentesco. O vínculo vale nos dois sentidos — aparece no cadastro dos dois.</p>
+        <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+          {PARENTESCOS.map(pt=>(
+            <button key={pt.v} type="button" disabled={salvando} onClick={()=>vincular(pt.v)}
+              style={{border:"1.5px solid #e2e8f0",background:"#fff",borderRadius:20,padding:"9px 16px",fontSize:13,fontWeight:700,color:"#334155",cursor:salvando?"wait":"pointer",fontFamily:"'Outfit',sans-serif"}}>
+              {escolhido?rotuloParentesco(pt.v,escolhido.gender):pt.label}
+            </button>
+          ))}
+        </div>
+      </Modal>
+    </div>
+  )
+}
+
 function EquipeField({label,emoji,valores,onChange,membros,titulo,placeholder,addLabel}){
   const[buscaIdx,setBuscaIdx]=useState(null)
   const lista=valores&&valores.length?valores:[""]
@@ -1256,14 +1395,7 @@ function MemberProfile({session,showToast}){
           </div>
         ):null)}
       </Card>
-      {(member.father_name||member.mother_name||member.spouse_name)&&(
-        <Card style={{marginBottom:12}}>
-          <h3 style={{fontSize:13,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:".05em",marginBottom:10}}>Família</h3>
-          {member.father_name&&<div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #f1f5f9",fontSize:13}}><span style={{color:"#94a3b8",fontWeight:600}}>Pai</span><span style={{color:"#334155",fontWeight:700}}>{member.father_name}</span></div>}
-          {member.mother_name&&<div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #f1f5f9",fontSize:13}}><span style={{color:"#94a3b8",fontWeight:600}}>Mãe</span><span style={{color:"#334155",fontWeight:700}}>{member.mother_name}</span></div>}
-          {member.spouse_name&&<div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",fontSize:13}}><span style={{color:"#94a3b8",fontWeight:600}}>Cônjuge</span><span style={{color:"#334155",fontWeight:700}}>{member.spouse_name}</span></div>}
-        </Card>
-      )}
+      <FamiliaCard member={member} members={members}/>
       {cell&&(
         <Card>
           <h3 style={{fontSize:13,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:".05em",marginBottom:10}}>Minha Célula</h3>
@@ -1923,8 +2055,7 @@ function MembersPanel({session,showToast}){
   const[filterCell,setFilterCell]=useState("")
   const[filterAge,setFilterAge]=useState("")
   const[cardModal,setCardModal]=useState(null)
-  const[showFamilySearch,setShowFamilySearch]=useState(false)
-  const[familyField,setFamilyField]=useState(null)
+
   const[showInviterSearch,setShowInviterSearch]=useState(false)
   const[showInactive,setShowInactive]=useState(false)
   const[inactivateModal,setInactivateModal]=useState(null)
@@ -2227,20 +2358,13 @@ function MembersPanel({session,showToast}){
         </div>
         <div style={{borderTop:"1px solid #f1f5f9",margin:"8px 0",paddingTop:12}}>
           <p style={{fontSize:11,fontWeight:700,color:"#64748b",marginBottom:10,textTransform:"uppercase",letterSpacing:"0.05em"}}>Família</p>
-          {[["father_name","Pai"],["mother_name","Mãe"],["spouse_name","Cônjuge"]].map(([field,label])=>(
-            <div key={field} style={{marginBottom:14}}>
-              <label style={{display:"block",fontSize:11,fontWeight:700,color:"#64748b",marginBottom:5,letterSpacing:"0.05em",textTransform:"uppercase"}}>{label}</label>
-              <div style={{display:"flex",gap:8}}>
-                <input value={form[field]||""} onChange={e=>f(field)(e.target.value.toUpperCase())} placeholder={`Nome do ${label.toLowerCase()}`} style={{flex:1,border:"1.5px solid #e2e8f0",borderRadius:10,padding:"10px 14px",fontSize:14,outline:"none"}}/>
-                <button type="button" onClick={()=>{setFamilyField(field);setShowFamilySearch(true)}} style={{background:C.primary+"15",border:"none",borderRadius:10,padding:"10px 12px",cursor:"pointer",color:C.primary,display:"flex",alignItems:"center"}}><Icon name="search" size={14}/></button>
-              </div>
-            </div>
-          ))}
-        </div>
-        <Btn full onClick={save} style={{marginTop:8}}>{editing?"Salvar Alterações":"Cadastrar"}</Btn>
+          {editing
+            ? <FamiliaField memberId={editing} members={members} session={session} showToast={showToast}/>
+            : <p style={{fontSize:12.5,color:"#94a3b8",margin:0}}>Salve o cadastro primeiro. Depois é só reabrir para vincular pai, mãe, irmãos, primos e quem mais fizer parte da família.</p>}
+        </div>        <Btn full onClick={save} style={{marginTop:8}}>{editing?"Salvar Alterações":"Cadastrar"}</Btn>
       </Modal>
 
-      <MemberSearchModal open={showFamilySearch} title="Buscar Familiar" members={members} onSelect={m=>setForm(p=>({...p,[familyField]:m.name}))} onClose={()=>setShowFamilySearch(false)}/>
+
       <MemberSearchModal open={showInviterSearch} title="Quem convidou?" members={members} onSelect={m=>setForm(p=>({...p,invited_by:m.name}))} onClose={()=>setShowInviterSearch(false)}/>
       {cardModal&&<MemberCard member={cardModal} cells={cells} onClose={()=>setCardModal(null)}/>}
       {pwModal&&<Modal open title="Redefinir Senha" onClose={()=>setPwModal(null)}><Inp label="Nova Senha" type="password" value={newPw} onChange={setNewPw} placeholder="Mínimo 6 caracteres"/><Btn full onClick={resetPw}>Redefinir Senha</Btn></Modal>}
@@ -2518,13 +2642,13 @@ function MeetingsPanel({session,showToast}){
     if(meeting.theme)L.push(`📖 *Palavra:* ${meeting.theme}`)
     if(meeting.theme_youth)L.push(`📘 *Estudo dos jovens:* ${meeting.theme_youth}`)
     const cond=nomes(meeting.preacher)
-    if(cond.length)L.push(`🎤 *Quem conduz:* ${juntar(cond)}`)
+    if(cond.length)L.push(`🎤 *Palavra com:* ${juntar(cond)}`)
     const lv=nomes(meeting.louvor)
-    if(lv.length)L.push(`🎵 *Louvor:* ${juntar(lv)}`)
+    if(lv.length)L.push(`🎵 *Louvor com:* ${juntar(lv)}`)
     const qg=nomes(meeting.quebra_gelo)
-    if(qg.length)L.push(`🧊 *Quebra-gelo:* ${juntar(qg)}`)
+    if(qg.length)L.push(`🧊 *Quebra-gelo com:* ${juntar(qg)}`)
     const ln=nomes(meeting.lanche)
-    if(ln.length)L.push(`🍰 *Lanche:* ${juntar(ln)}`)
+    if(ln.length)L.push(`🍰 *Lanche com:* ${juntar(ln)}`)
     if(meeting.songs)L.push(`🎶 *Músicas:* ${meeting.songs}`)
     L.push("")
     L.push("_Te esperamos lá!_ 🙌")
@@ -2657,10 +2781,10 @@ function MeetingsPanel({session,showToast}){
             <button type="button" onClick={()=>setStudySearch(true)} style={{background:C.gold+"15",border:"none",borderRadius:10,padding:"10px 12px",cursor:"pointer",color:C.gold,display:"flex",alignItems:"center",gap:5,fontSize:12,fontWeight:700,flexShrink:0}}><Icon name="star" size={14}/>Estudos</button>
           </div>
         </div>
-        <EquipeField label="Quem conduziu a Palavra" emoji="🎤" valores={form.preachers} onChange={f("preachers")} membros={members} titulo="Quem passou a Palavra?" placeholder="Nome de quem conduziu" addLabel="Adicionar condutor"/>
-        <EquipeField label="Quem separou o louvor" emoji="🎵" valores={form.louvor} onChange={f("louvor")} membros={members} titulo="Quem separou o louvor?" placeholder="Nome de quem separou" addLabel="Adicionar pessoa"/>
-        <EquipeField label="Quem fez o quebra-gelo" emoji="🧊" valores={form.quebra_gelo} onChange={f("quebra_gelo")} membros={members} titulo="Quem fez o quebra-gelo?" placeholder="Nome de quem conduziu" addLabel="Adicionar pessoa"/>
-        <EquipeField label="Quem fez o lanche" emoji="🍰" valores={form.lanche} onChange={f("lanche")} membros={members} titulo="Quem fez o lanche?" placeholder="Nome de quem trouxe" addLabel="Adicionar pessoa"/>        <div style={{marginBottom:14}}>
+        <EquipeField label="Quem vai conduzir a Palavra" emoji="🎤" valores={form.preachers} onChange={f("preachers")} membros={members} titulo="Quem vai conduzir a Palavra?" placeholder="Nome de quem vai conduzir" addLabel="Adicionar condutor"/>
+        <EquipeField label="Quem vai separar o louvor" emoji="🎵" valores={form.louvor} onChange={f("louvor")} membros={members} titulo="Quem vai separar o louvor?" placeholder="Nome de quem vai separar" addLabel="Adicionar pessoa"/>
+        <EquipeField label="Quem vai fazer o quebra-gelo" emoji="🧊" valores={form.quebra_gelo} onChange={f("quebra_gelo")} membros={members} titulo="Quem vai fazer o quebra-gelo?" placeholder="Nome de quem vai conduzir" addLabel="Adicionar pessoa"/>
+        <EquipeField label="Quem vai levar o lanche" emoji="🍰" valores={form.lanche} onChange={f("lanche")} membros={members} titulo="Quem vai levar o lanche?" placeholder="Nome de quem vai levar" addLabel="Adicionar pessoa"/>        <div style={{marginBottom:14}}>
           <label style={{display:"block",fontSize:11,fontWeight:700,color:"#64748b",marginBottom:5,letterSpacing:"0.05em",textTransform:"uppercase"}}>Músicas Cantadas</label>
           <div style={{display:"flex",gap:8,marginBottom:8}}>
             <input value={form.songs} onChange={e=>f("songs")(e.target.value)} placeholder="Digite manualmente ou use o botão..." style={{flex:1,border:"1.5px solid #e2e8f0",borderRadius:10,padding:"10px 14px",fontSize:14,outline:"none"}}/>
