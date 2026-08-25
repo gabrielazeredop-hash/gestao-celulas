@@ -448,7 +448,7 @@ export default function App(){
 
   async function handleLGPDAccept(){
     if(!pendingSession)return
-    await supabase.from("users").update({lgpd_accepted:true,lgpd_accepted_at:new Date().toISOString()}).eq("id",pendingSession.id)
+    await supabase.rpc("aceitar_lgpd")
     setShowLGPD(false);startSession({...pendingSession,lgpd_accepted:true});setPendingSession(null)
   }
 
@@ -930,7 +930,6 @@ const NAV={
     more:[
       {id:"songs",label:"Músicas",icon:"music"},
       {id:"studies",label:"Estudos",icon:"star"},
-      {id:"events",label:"Eventos",icon:"event"},
       {id:"reports",label:"Relatórios",icon:"bar-chart"},
       {id:"messages",label:"Mensagens",icon:"message"},
       {id:"requests",label:"Solicitações",icon:"inbox"},
@@ -1113,7 +1112,6 @@ function AppShell({session,logout,showToast}){
       if(tab==="prayer")return<PrayerPanel session={session} showToast={showToast}/>
       if(tab==="songs")return<SongsPanel session={session} showToast={showToast}/>
       if(tab==="studies")return<StudiesPanel session={session} showToast={showToast}/>
-      if(tab==="events")return<EventsPanel session={session} showToast={showToast}/>
       if(tab==="reports")return<ReportsPanel session={session}/>
       if(tab==="messages")return<MessagesPanel session={session} showToast={showToast}/>
       if(tab==="requests")return<AllRequestsPanel session={session} showToast={showToast}/>
@@ -2135,7 +2133,9 @@ function MembersPanel({session,showToast}){
       birthDate=`${y}-${String(bMonth).padStart(2,"0")}-${String(bDay).padStart(2,"0")}`
     }
     const idade=birthDate?calcAge(birthDate):(parseInt(form.age)||null)
-    const payload={name:form.name.trim().toUpperCase(),cpf:cpfNorm||null,age:idade,birth_date:birthDate,gender:form.gender,phone:form.phone,email:form.email,neighborhood:form.neighborhood,cell_id:form.cell_id||null,status:form.status,role:"member",baptized:form.baptized,baptism_date:form.baptized&&form.baptism_date?form.baptism_date:null,invited_by:form.invited_by,father_name:form.father_name,mother_name:form.mother_name,spouse_name:form.spouse_name,photo_url:form.photo_url,church_member:form.church_member||false}
+    // líder/secretário só cadastra na própria célula (o banco também exige isso)
+    const cellFinal=isAdmin?(form.cell_id||null):(session?.cell_id||null)
+    const payload={name:form.name.trim().toUpperCase(),cpf:cpfNorm||null,age:idade,birth_date:birthDate,gender:form.gender,phone:form.phone,email:form.email,neighborhood:form.neighborhood,cell_id:cellFinal,status:form.status,role:"member",baptized:form.baptized,baptism_date:form.baptized&&form.baptism_date?form.baptism_date:null,invited_by:form.invited_by,father_name:form.father_name,mother_name:form.mother_name,spouse_name:form.spouse_name,photo_url:form.photo_url,church_member:form.church_member||false}
     // A conta de acesso nasce com QUALQUER contato: CPF, telefone ou e-mail.
     // Antes exigia CPF, e como visitante quase nunca informa CPF, a pessoa ficava
     // cadastrada mas sem senha nenhuma — a tela de login aceitava telefone, só que
@@ -2145,7 +2145,7 @@ function MembersPanel({session,showToast}){
     async function criarAcesso(memberId){
       const{data:ja}=await supabase.from("users").select("id").eq("member_id",memberId).maybeSingle()
       if(ja)return"ja tinha"
-      const{error}=await supabase.from("users").insert({member_id:memberId,cpf:cpfNorm||null,password_hash:btoa64(SENHA_PADRAO),name:form.name.trim().toUpperCase(),role:"member",cell_id:form.cell_id||null,active:true})
+      const{error}=await supabase.from("users").insert({member_id:memberId,cpf:cpfNorm||null,name:form.name.trim().toUpperCase(),role:"member",cell_id:cellFinal,active:true})
       if(!error){await supabase.rpc("def_senha_membro",{p_member_id:memberId,p_senha:SENHA_PADRAO});return"criado"}
       // a coluna cpf da tabela users ainda e obrigatoria no banco
       if(error.code==="23502")return"O banco ainda exige CPF para criar acesso. Cadastro salvo, mas sem login."
@@ -2341,7 +2341,9 @@ function MembersPanel({session,showToast}){
         <Inp label="Telefone (WhatsApp)" value={form.phone} onChange={v=>f("phone")(fmtPhone(v))} placeholder="(00) 00000-0000"/>
         <Inp label="E-mail" type="email" value={form.email} onChange={f("email")}/>
         <Inp label="Bairro" value={form.neighborhood} onChange={v=>f("neighborhood")(v.toUpperCase())}/>
-        <Sel label="Célula" value={form.cell_id} onChange={f("cell_id")} options={cOpts}/>
+        {isAdmin
+          ? <Sel label="Célula" value={form.cell_id} onChange={f("cell_id")} options={cOpts}/>
+          : <div style={{marginBottom:14}}><label style={{display:"block",fontSize:11,fontWeight:700,color:"#64748b",marginBottom:5,letterSpacing:"0.05em",textTransform:"uppercase"}}>Célula</label><div style={{background:`${C.primary}08`,border:`1px solid ${C.primary}20`,borderRadius:10,padding:"10px 14px",fontSize:13,fontWeight:700,color:C.primary}}>🏠 {cells.find(c=>c.id===session?.cell_id)?.name||"Sua célula"}</div></div>}
         <div style={{marginBottom:14}}>
           <label style={{display:"block",fontSize:11,fontWeight:700,color:"#64748b",marginBottom:5,letterSpacing:"0.05em",textTransform:"uppercase"}}>Convidado por</label>
           <div style={{display:"flex",gap:8}}>
@@ -2358,6 +2360,7 @@ function MembersPanel({session,showToast}){
           </div>
           {form.baptized&&<Inp label="Data do Batismo (opcional)" type="date" value={form.baptism_date} onChange={f("baptism_date")}/>}
         </div>
+        {isAdmin?(
         <div style={{marginBottom:14}}>
           <label style={{display:"block",fontSize:11,fontWeight:700,color:"#64748b",marginBottom:8,letterSpacing:"0.05em",textTransform:"uppercase"}}>⛪ Membro da Promessa Lago dos Peixes?</label>
           <div style={{display:"flex",gap:8}}>
@@ -2365,6 +2368,9 @@ function MembersPanel({session,showToast}){
             <button type="button" onClick={()=>f("church_member")(false)} style={{flex:1,padding:"10px",borderRadius:10,fontSize:13,fontWeight:700,border:`1.5px solid ${form.church_member===false?"#dc2626":"#e2e8f0"}`,background:form.church_member===false?"#fee2e2":"#f8fafc",color:form.church_member===false?"#dc2626":"#64748b",cursor:"pointer"}}>✗ Não</button>
           </div>
         </div>
+        ):form.church_member?(
+          <div style={{marginBottom:14,fontSize:12.5,color:"#64748b",background:"#f8fafc",border:"1px solid #e2e8f0",borderRadius:10,padding:"9px 12px"}}>⛪ Membro da Promessa Lago dos Peixes (definido pela igreja)</div>
+        ):null}
         <div style={{borderTop:"1px solid #f1f5f9",margin:"8px 0",paddingTop:12}}>
           <p style={{fontSize:11,fontWeight:700,color:"#64748b",marginBottom:10,textTransform:"uppercase",letterSpacing:"0.05em"}}>Família</p>
           {editing
@@ -2516,44 +2522,34 @@ function EscolhaLouvorPage({pollId}){
   const[verLetra,setVerLetra]=useState(null)
 
   useEffect(()=>{(async()=>{
-    const{data,error}=await supabase.from("song_polls").select("*").eq("id",pollId).maybeSingle()
-    if(error||!data){setErro("Não encontrei essa seleção. Pode ser que o link esteja errado ou tenha sido apagado.");setCarregando(false);return}
-    setPoll(data)
-    if(data.status==="respondida"){setPronto(true)}
-    const{data:ss}=await supabase.from("songs").select("*").in("id",data.song_ids||[])
-    setMusicas(ss||[])
+    // Tudo pela função do banco: o anônimo não lê nenhuma tabela (nem telefones).
+    const{data,error}=await supabase.rpc("abrir_louvor",{p_id:pollId})
+    if(error||!data||data.erro){setErro("Não encontrei essa seleção. Pode ser que o link esteja errado ou tenha sido apagado.");setCarregando(false);return}
+    setPoll(data.poll)
+    if(data.poll.status==="respondida"){setPronto(true)}
+    setMusicas(data.songs||[])
     setCarregando(false)
   })()},[pollId])
 
   function confirmar(){
     const digitado=tel.replace(/\D/g,"")
     if(digitado.length<8){setErro("Digite o telefone completo, com DDD");return}
-    setErro("")
-    ;(async()=>{
-      const{data:m}=await supabase.from("members").select("id,phone").eq("id",poll.member_id).maybeSingle()
-      const guardado=(m?.phone||"").replace(/\D/g,"")
-      if(!guardado){setErro("Seu cadastro está sem telefone. Peça ao líder para preencher.");return}
-      if(guardado.slice(-8)!==digitado.slice(-8)){setErro("Esse telefone não confere com o cadastro.");return}
-      setLiberado(true)
-    })()
+    // A conferência do telefone acontece no servidor, na hora de enviar.
+    setErro("");setLiberado(true)
   }
 
   async function enviarEscolha(){
     if(salvando)return
     setSalvando(true)
-    const titulos=marcadas.map(id=>musicas.find(s=>s.id===id)?.title).filter(Boolean)
-    const{error}=await supabase.from("song_polls").update({
-      chosen_ids:marcadas,status:"respondida",answered_at:new Date().toISOString()
-    }).eq("id",poll.id)
-    if(error){setSalvando(false);setErro("Não consegui salvar: "+error.message);return}
-    // as escolhidas entram direto no encontro
-    if(poll.meeting_id){
-      const{data:mt}=await supabase.from("meetings").select("songs").eq("id",poll.meeting_id).maybeSingle()
-      const atuais=(mt?.songs||"").split(", ").map(x=>x.trim()).filter(Boolean)
-      const juntas=[...new Set([...atuais,...titulos])].join(", ")
-      await supabase.from("meetings").update({songs:juntas}).eq("id",poll.meeting_id)
+    const{data,error}=await supabase.rpc("responder_louvor",{p_id:poll.id,p_tel:tel,p_escolhas:marcadas})
+    setSalvando(false)
+    if(error){setErro("Não consegui salvar agora. Tente de novo.");return}
+    if(data&&data.erro){
+      setErro(data.erro)
+      if(/telefone|cadastro/i.test(data.erro))setLiberado(false) // volta pra confirmar o telefone
+      return
     }
-    setSalvando(false);setPronto(true)
+    setPronto(true)
   }
 
   const caixa={maxWidth:520,margin:"0 auto",padding:"20px 16px 40px"}
@@ -2785,7 +2781,7 @@ function MeetingsPanel({session,showToast}){
   const savingFormRef=useRef(false)
   const savingAttRef=useRef(false)
 
-  const emptyForm={cell_id:session?.cell_id||"",date:todayStr(),hora:"",local:"",theme:"",theme_youth:"",preachers:["",""],louvor:[""],quebra_gelo:[""],lanche:[""],songs:"",photos_link:"",is_general:false}
+  const emptyForm={cell_id:session?.cell_id||"",date:todayStr(),hora:"",local:"",theme:"",theme_youth:"",preachers:["",""],louvor:[""],quebra_gelo:[""],recepcao:[""],lanche:[""],songs:"",photos_link:"",is_general:false}
   const[form,setForm]=useState(emptyForm)
   const f=k=>v=>setForm(p=>({...p,[k]:v}))
 
@@ -2798,7 +2794,7 @@ function MeetingsPanel({session,showToast}){
     let preachers=["",""]
     try{const arr=JSON.parse(meeting.preacher);if(Array.isArray(arr))preachers=arr.length<2?[...arr,...Array(2-arr.length).fill("")]:arr}
     catch{preachers=[meeting.preacher||"",meeting.preacher_kids||""]}
-    setForm({cell_id:meeting.cell_id||"",date:meeting.date,hora:meeting.hora||"",local:meeting.local||"",theme:meeting.theme||"",theme_youth:meeting.theme_youth||"",preachers,louvor:lerLista(meeting.louvor),quebra_gelo:lerLista(meeting.quebra_gelo),lanche:lerLista(meeting.lanche),songs:meeting.songs||"",photos_link:meeting.photos_link||"",is_general:meeting.is_general||false})
+    setForm({cell_id:meeting.cell_id||"",date:meeting.date,hora:meeting.hora||"",local:meeting.local||"",theme:meeting.theme||"",theme_youth:meeting.theme_youth||"",preachers,louvor:lerLista(meeting.louvor),quebra_gelo:lerLista(meeting.quebra_gelo),recepcao:lerLista(meeting.recepcao),lanche:lerLista(meeting.lanche),songs:meeting.songs||"",photos_link:meeting.photos_link||"",is_general:meeting.is_general||false})
     setSelectedSongs(songList)
     setEditing(meeting.id);setMarks({});setStep("form")
   }
@@ -2811,7 +2807,7 @@ function MeetingsPanel({session,showToast}){
     setSaving(true)
     try{
       const guardarLista=a=>JSON.stringify((a||[]).map(x=>x.trim()).filter(Boolean))
-      const payload={cell_id:form.is_general?null:form.cell_id||null,date:form.date,hora:form.hora||null,local:form.local||null,theme:form.theme,theme_youth:form.theme_youth,songs:form.songs,photos_link:form.photos_link,is_general:form.is_general,created_by:session.id,preacher:guardarLista(form.preachers),louvor:guardarLista(form.louvor),quebra_gelo:guardarLista(form.quebra_gelo),lanche:guardarLista(form.lanche)}
+      const payload={cell_id:form.is_general?null:form.cell_id||null,date:form.date,hora:form.hora||null,local:form.local||null,theme:form.theme,theme_youth:form.theme_youth,songs:form.songs,photos_link:form.photos_link,is_general:form.is_general,created_by:session.id,preacher:guardarLista(form.preachers),louvor:guardarLista(form.louvor),quebra_gelo:guardarLista(form.quebra_gelo),recepcao:guardarLista(form.recepcao),lanche:guardarLista(form.lanche)}
       if(editing){
         const{error}=await supabase.from("meetings").update(payload).eq("id",editing)
         if(error){showToast("Erro ao salvar: "+error.message,"error");return}
@@ -2832,7 +2828,7 @@ function MeetingsPanel({session,showToast}){
         if(error||!newMeeting){showToast("Erro ao criar encontro: "+(error?.message||"tente novamente"),"error");return}
         if(form.cell_id&&!form.is_general){
           const cell=cells.find(c=>c.id===form.cell_id)
-          if(cell?.auto_create_meetings)await supabase.from("cells").update({next_meeting_date:getNextMeetingDate(cell.day)}).eq("id",form.cell_id)
+          if(cell?.auto_create_meetings)await supabase.rpc("set_next_meeting",{p_cell:form.cell_id,p_date:getNextMeetingDate(cell.day)})
         }
         const cellName=cells.find(c=>c.id===form.cell_id)?.name||"Celulão"
         await addLog(session,"create",`Encontro registrado: ${cellName} — ${form.date}`)
@@ -2913,13 +2909,15 @@ function MeetingsPanel({session,showToast}){
     if(meeting.theme)L.push(`📖 *Palavra:* ${meeting.theme}`)
     if(meeting.theme_youth)L.push(`📘 *Estudo dos jovens:* ${meeting.theme_youth}`)
     const cond=nomes(meeting.preacher)
-    if(cond.length)L.push(`🎤 *Palavra com:* ${juntar(cond)}`)
+    if(cond.length)L.push(`🎤 *Palavra:* ${juntar(cond)}`)
     const lv=nomes(meeting.louvor)
-    if(lv.length)L.push(`🎵 *Louvor com:* ${juntar(lv)}`)
+    if(lv.length)L.push(`🎵 *Louvor:* ${juntar(lv)}`)
     const qg=nomes(meeting.quebra_gelo)
-    if(qg.length)L.push(`🧊 *Quebra-gelo com:* ${juntar(qg)}`)
+    if(qg.length)L.push(`🧊 *Quebra-gelo:* ${juntar(qg)}`)
+    const rc=nomes(meeting.recepcao)
+    if(rc.length)L.push(`🤝 *Recepção:* ${juntar(rc)}`)
     const ln=nomes(meeting.lanche)
-    if(ln.length)L.push(`🍰 *Lanche com:* ${juntar(ln)}`)
+    if(ln.length)L.push(`🍰 *Lanche:* ${juntar(ln)}`)
     if(meeting.songs)L.push(`🎶 *Músicas:* ${meeting.songs}`)
     L.push("")
     L.push("_Te esperamos lá!_ 🙌")
@@ -3056,10 +3054,11 @@ function MeetingsPanel({session,showToast}){
             <button type="button" onClick={()=>setStudySearch(true)} style={{background:C.gold+"15",border:"none",borderRadius:10,padding:"10px 12px",cursor:"pointer",color:C.gold,display:"flex",alignItems:"center",gap:5,fontSize:12,fontWeight:700,flexShrink:0}}><Icon name="star" size={14}/>Estudos</button>
           </div>
         </div>
-        <EquipeField label="Quem vai conduzir a Palavra" emoji="🎤" valores={form.preachers} onChange={f("preachers")} membros={members} titulo="Quem vai conduzir a Palavra?" placeholder="Nome de quem vai conduzir" addLabel="Adicionar condutor"/>
-        <EquipeField label="Quem vai separar o louvor" emoji="🎵" valores={form.louvor} onChange={f("louvor")} membros={members} titulo="Quem vai separar o louvor?" placeholder="Nome de quem vai separar" addLabel="Adicionar pessoa"/>
-        <EquipeField label="Quem vai fazer o quebra-gelo" emoji="🧊" valores={form.quebra_gelo} onChange={f("quebra_gelo")} membros={members} titulo="Quem vai fazer o quebra-gelo?" placeholder="Nome de quem vai conduzir" addLabel="Adicionar pessoa"/>
-        <EquipeField label="Quem vai levar o lanche" emoji="🍰" valores={form.lanche} onChange={f("lanche")} membros={members} titulo="Quem vai levar o lanche?" placeholder="Nome de quem vai levar" addLabel="Adicionar pessoa"/>        <div style={{marginBottom:14}}>
+        <EquipeField label="Condutor da Palavra" emoji="🎤" valores={form.preachers} onChange={f("preachers")} membros={members} titulo="Condutor da Palavra" placeholder="Nome" addLabel="Adicionar"/>
+        <EquipeField label="Louvor" emoji="🎵" valores={form.louvor} onChange={f("louvor")} membros={members} titulo="Responsável pelo louvor" placeholder="Nome" addLabel="Adicionar"/>
+        <EquipeField label="Quebra-gelo" emoji="🧊" valores={form.quebra_gelo} onChange={f("quebra_gelo")} membros={members} titulo="Quebra-gelo" placeholder="Nome" addLabel="Adicionar"/>
+        <EquipeField label="Recepção" emoji="🤝" valores={form.recepcao} onChange={f("recepcao")} membros={members} titulo="Recepção" placeholder="Nome" addLabel="Adicionar"/>
+        <EquipeField label="Lanche" emoji="🍰" valores={form.lanche} onChange={f("lanche")} membros={members} titulo="Lanche" placeholder="Nome" addLabel="Adicionar"/>        <div style={{marginBottom:14}}>
           <label style={{display:"block",fontSize:11,fontWeight:700,color:"#64748b",marginBottom:5,letterSpacing:"0.05em",textTransform:"uppercase"}}>Músicas Cantadas</label>
           <div style={{display:"flex",gap:8,marginBottom:8}}>
             <input value={form.songs} onChange={e=>f("songs")(e.target.value)} placeholder="Digite manualmente ou use o botão..." style={{flex:1,border:"1.5px solid #e2e8f0",borderRadius:10,padding:"10px 14px",fontSize:14,outline:"none"}}/>
@@ -3403,14 +3402,15 @@ function EventsPanel({session,showToast}){
   async function save(){
     if(!form.title||!form.date){showToast("Título e data obrigatórios","error");return}
     const payload={...form,cell_id:form.cell_id||null,created_by:session.id}
-    if(editing){await supabase.from("events").update(payload).eq("id",editing);showToast("Evento atualizado!")}
-    else{await supabase.from("events").insert(payload);showToast("Evento criado!")}
+    const{error}=editing?await supabase.from("events").update(payload).eq("id",editing):await supabase.from("events").insert(payload)
+    if(error){showToast("Não consegui salvar o evento: "+error.message,"error");return}
+    showToast(editing?"Evento atualizado!":"Evento criado!")
     setModal(false);setEditing(null);setForm(emptyForm)
   }
 
   async function saveAtt(eventId){
     const records=Object.entries(marks).map(([mid,status])=>({event_id:eventId,member_id:mid,member_name:members.find(m=>m.id===mid)?.name||"",status}))
-    if(records.length>0)await supabase.from("event_attendance").insert(records)
+    if(records.length>0){const{error}=await supabase.from("event_attendance").insert(records);if(error){showToast("Não consegui salvar a presença: "+error.message,"error");return}}
     showToast("Presença salva!");setAttModal(null);setMarks({})
   }
 
@@ -4730,7 +4730,9 @@ function AllRequestsPanel({session,showToast}){
 
 function LogsPanel(){
   const{data:logs,loading}=useTable("logs")
-  const{data:users}=useTable("users")
+  // só colunas liberadas (pwd não é legível); evita select("*") que quebraria
+  const[users,setUsers]=useState([])
+  useEffect(()=>{supabase.from("users").select("id,name").then(({data})=>setUsers(data||[]))},[])
   const emoji={create:"➕",update:"✏️",delete:"🗑️"}
   return(
     <div>

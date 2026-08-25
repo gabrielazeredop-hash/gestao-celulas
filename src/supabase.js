@@ -25,3 +25,6 @@ export function getAuthToken() { return _token }
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   accessToken: async () => _token || SUPABASE_ANON_KEY,
 })
+
+// Garante que o "tempo real" também use o crachá (necessário com o banco fechado).
+if (_token) { try { supabase.realtime.setAuth(_token) } catch (e) {} }
