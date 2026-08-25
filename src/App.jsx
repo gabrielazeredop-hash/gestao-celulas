@@ -659,7 +659,8 @@ function ChangePasswordModal({open,onClose,session,showToast}){
     if(newPw!==confirmPw){showToast("Senhas não conferem","error");return}
     const{data}=await supabase.from("users").select("password_hash").eq("id",session.id).single()
     if(!data||atob64(data.password_hash)!==oldPw){showToast("Senha atual incorreta","error");return}
-    await supabase.from("users").update({password_hash:btoa64(newPw)}).eq("id",session.id)
+    const{error:errPw}=await supabase.from("users").update({password_hash:btoa64(newPw)}).eq("id",session.id)
+    if(errPw){showToast("Não consegui alterar a senha: "+errPw.message,"error");return}
     showToast("Senha alterada!");setOldPw("");setNewPw("");setConfirmPw("");onClose()
   }
   return(
@@ -1899,7 +1900,7 @@ function CellsPanel({session,showToast}){
     setModal(false);setEditing(null);setForm(emptyForm)
   }
 
-  async function del(){await supabase.from("cells").delete().eq("id",deleteId);showToast("Célula removida");setDeleteId(null)}
+  async function del(){const{error}=await supabase.from("cells").delete().eq("id",deleteId);if(error){showToast("Não consegui remover: "+error.message,"error");return}showToast("Célula removida");setDeleteId(null)}
 
   const filteredCells=cells.filter(c=>{
     const matchType=!filterType||c.cell_type===filterType
@@ -2069,7 +2070,8 @@ function MembersPanel({session,showToast}){
   async function submitInactRequest(){
     if(!requestInactReason.trim()){showToast("Informe o motivo","error");return}
     const m=members.find(x=>x.id===requestInactModal)
-    await supabase.from("inactivation_requests").insert({member_id:m.id,member_name:m.name,cell_id:m.cell_id||null,reason:requestInactReason.trim(),requested_by:session.id,requested_by_name:session.name,status:"pending"})
+    const{error}=await supabase.from("inactivation_requests").insert({member_id:m.id,member_name:m.name,cell_id:m.cell_id||null,reason:requestInactReason.trim(),requested_by:session.id,requested_by_name:session.name,status:"pending"})
+    if(error){showToast("Não consegui enviar a solicitação: "+error.message,"error");return}
     await addLog(session,"create",`Solicitação de inativação enviada: ${m.name}`)
     showToast("Solicitação enviada ao gestor!");setRequestInactModal(null);setRequestInactReason("")
   }
@@ -2077,7 +2079,8 @@ function MembersPanel({session,showToast}){
   async function submitDeleteRequest(){
     if(!requestDeleteReason.trim()){showToast("Informe o motivo","error");return}
     const m=members.find(x=>x.id===requestDeleteModal)
-    await supabase.from("inactivation_requests").insert({member_id:m.id,member_name:m.name,cell_id:m.cell_id||null,reason:`[EXCLUIR] ${requestDeleteReason.trim()}`,requested_by:session.id,requested_by_name:session.name,status:"pending"})
+    const{error}=await supabase.from("inactivation_requests").insert({member_id:m.id,member_name:m.name,cell_id:m.cell_id||null,reason:`[EXCLUIR] ${requestDeleteReason.trim()}`,requested_by:session.id,requested_by_name:session.name,status:"pending"})
+    if(error){showToast("Não consegui enviar a solicitação: "+error.message,"error");return}
     await addLog(session,"create",`Solicitação de exclusão enviada: ${m.name}`)
     showToast("Solicitação de exclusão enviada ao gestor!");setRequestDeleteModal(null);setRequestDeleteReason("")
   }
@@ -2101,7 +2104,10 @@ function MembersPanel({session,showToast}){
   async function confirmInactivate(){
     if(!inactiveReason.trim()){showToast("Justificativa obrigatória","error");return}
     const m=members.find(x=>x.id===inactivateModal)
-    await supabase.from("members").update({status:"Inativo",inactive_reason:inactiveReason.trim(),inactivated_at:new Date().toISOString(),inactivated_by:session.name}).eq("id",inactivateModal)
+    // guarda o status atual para devolver certo na reativacao — antes todo mundo
+    // voltava como "Membro", o que promovia visitante sem querer
+    const{error}=await supabase.from("members").update({status:"Inativo",status_anterior:m?.status||"Visitante",inactive_reason:inactiveReason.trim(),inactivated_at:new Date().toISOString(),inactivated_by:session.name}).eq("id",inactivateModal)
+    if(error){showToast("Não consegui inativar: "+error.message,"error");return}
     await supabase.from("users").update({active:false}).eq("member_id",inactivateModal)
     await addLog(session,"update",`Membro inativado: ${m?.name} — Motivo: ${inactiveReason.trim()}`)
     showToast("Membro inativado");setInactivateModal(null);setInactiveReason("")
@@ -2109,10 +2115,12 @@ function MembersPanel({session,showToast}){
 
   async function confirmReactivate(){
     const m=members.find(x=>x.id===reactivateModal)
-    await supabase.from("members").update({status:"Membro",inactive_reason:null,inactivated_at:null,inactivated_by:null}).eq("id",reactivateModal)
+    const voltarPara=m?.status_anterior||(m?.cpf?"Membro":"Visitante")
+    const{error}=await supabase.from("members").update({status:voltarPara,status_anterior:null,inactive_reason:null,inactivated_at:null,inactivated_by:null}).eq("id",reactivateModal)
+    if(error){showToast("Não consegui reativar: "+error.message,"error");return}
     await supabase.from("users").update({active:true}).eq("member_id",reactivateModal)
     await addLog(session,"update",`Membro reativado: ${m?.name}`)
-    showToast("Membro reativado!");setReactivateModal(null)
+    showToast(`Reativado como ${voltarPara}!`);setReactivateModal(null)
   }
 
   async function save(){
@@ -2682,10 +2690,10 @@ function MeetingsPanel({session,showToast}){
       {filteredMeetings.map(meeting=>{
         const cell=cells.find(c=>c.id===meeting.cell_id)
         // Conta 1 por pessoa: se sobrar linha repetida no banco, o número não infla.
-        const meetingAtt=dedupeAtt(attendance.filter(a=>a.date===meeting.date&&(meeting.is_general||a.cell_id===meeting.cell_id)))
+        const meetingAtt=dedupeAtt(attendance.filter(a=>a.date===meeting.date&&(meeting.is_general?!a.cell_id:a.cell_id===meeting.cell_id)))
         const present=meetingAtt.filter(a=>a.status==="Presente").length
         const total=meetingAtt.length
-        const meetingComments=comments.filter(c=>c.attendance_date===meeting.date&&(meeting.is_general||c.cell_id===meeting.cell_id))
+        const meetingComments=comments.filter(c=>c.attendance_date===meeting.date&&(meeting.is_general?!c.cell_id:c.cell_id===meeting.cell_id))
         return(
           <Card key={meeting.id} style={{marginBottom:10}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
@@ -4483,588 +4491,3 @@ function LogsPanel(){
 }
 
 // ─── LEADER/SECRETARY DASHBOARD ───────────────────────────────────────────────
-function LeaderSecretaryDashboard({session,logout,showToast}){
-  const[sub,setSub]=useState("home")
-  const[lsBdModal,setLsBdModal]=useState(null)
-  const[showChangePw,setShowChangePw]=useState(false)
-  const{data:cells}=useTable("cells")
-  const{data:members}=useTable("members")
-  const{data:meetings}=useTable("meetings")
-  const{data:prayers}=useTable("prayer_requests")
-  const cell=cells.find(c=>c.id===session.cell_id)
-  const cellMembers=members.filter(m=>m.cell_id===session.cell_id&&m.status==="Membro")
-  const cellVisitors=members.filter(m=>m.cell_id===session.cell_id&&m.status==="Visitante")
-  const cellMeetings=meetings.filter(m=>m.cell_id===session.cell_id||m.is_general)
-  const roleLabel=session.role==="secretary"?"Secretário":"Líder"
-  const leaders=cell?members.filter(m=>cell.leaders_ids?.includes(m.id)):[]
-
-  const currentMonth=getCurrentMonth()
-  const{start,end}=getCurrentWeekDates()
-  const weekBirthdays=members.filter(m=>m.cell_id===session.cell_id&&m.birth_date&&(()=>{const b=parseDate(m.birth_date);const t=new Date(new Date().getFullYear(),b.getMonth(),b.getDate());return t>=start&&t<=end})())
-  const pendingPrayers=prayers.filter(p=>p.cell_id===session.cell_id&&p.status==="pending").length
-
-  const menu=[
-    {id:"members",icon:"users",label:"Pessoas",desc:`${cellMembers.length} membros, ${cellVisitors.length} visitantes`,color:C.primary},
-    {id:"meetings",icon:"meeting",label:"Encontros",desc:"Registrar e gerenciar",color:C.success},
-    {id:"events",icon:"event",label:"Eventos",desc:"Gerenciar eventos",color:C.purple},
-    {id:"prayer",icon:"pray",label:"Orações",desc:`${pendingPrayers} pedido(s) pendente(s)`,color:"#7c3aed"},
-    {id:"reports",icon:"bar-chart",label:"Relatórios",desc:"Frequência e dados",color:C.gold},
-    {id:"messages",icon:"message",label:"Mensagens",desc:"Comunicados",color:"#0891b2"},
-    {id:"requests",icon:"inbox",label:"Solicitações",desc:"Inativações e alterações",color:C.danger},
-    {id:"studies",icon:"star",label:"Estudos",desc:"Material de estudo",color:C.primary},
-    {id:"songs",icon:"music",label:"Músicas",desc:"Repertório da célula",color:C.success},
-  ]
-
-  function renderSub(){
-    if(sub==="members")return<MembersPanel session={session} showToast={showToast}/>
-    if(sub==="meetings")return<MeetingsPanel session={session} showToast={showToast}/>
-    if(sub==="events")return<EventsPanel session={session} showToast={showToast}/>
-    if(sub==="prayer")return<PrayerPanel session={session} showToast={showToast}/>
-    if(sub==="reports")return<ReportsPanel session={session}/>
-    if(sub==="messages")return<MessagesPanel session={session} showToast={showToast}/>
-    if(sub==="requests")return<AllRequestsPanel session={session} showToast={showToast}/>
-    if(sub==="studies")return<StudiesPanel session={session} showToast={showToast}/>
-    if(sub==="songs")return<SongsPanel session={session} showToast={showToast}/>
-    return null
-  }
-
-  return(
-    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column"}}>
-      <header style={{background:`linear-gradient(135deg,${C.darker},${C.primary})`,padding:"14px 18px",display:"flex",alignItems:"center",justifyContent:"space-between",boxShadow:"0 2px 12px rgba(0,0,0,0.2)"}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <LogoIcon size={30}/>
-          <div><div style={{color:"#fff",fontSize:15,fontWeight:800}}>{cell?.name||"Minha Célula"}</div><div style={{color:"rgba(255,255,255,0.6)",fontSize:11}}>{roleLabel} • {session.name}</div></div>
-        </div>
-        <div style={{display:"flex",gap:6}}>
-          <button onClick={()=>setShowChangePw(true)} style={{background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.15)",borderRadius:10,padding:"7px 10px",cursor:"pointer",color:"rgba(255,255,255,0.8)",display:"flex"}}><Icon name="key" size={15}/></button>
-          <button onClick={logout} style={{background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.15)",borderRadius:10,padding:"7px 12px",cursor:"pointer",color:"rgba(255,255,255,0.8)",display:"flex",alignItems:"center",gap:5,fontSize:12,fontWeight:600}}><Icon name="log-out" size={14}/>Sair</button>
-        </div>
-      </header>
-      {sub==="home"?(
-        <div style={{flex:1,padding:"16px 16px 80px"}}>
-          {weekBirthdays.length>0&&(
-            <div style={{background:`linear-gradient(135deg,${C.gold},#d4820f)`,borderRadius:16,padding:"14px 16px",marginBottom:16,boxShadow:"0 4px 16px rgba(232,146,26,0.3)"}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-                <div style={{fontSize:24}}>🎂</div>
-                <span style={{color:"#fff",fontSize:13,fontWeight:800}}>Aniversário esta semana!</span>
-              </div>
-              {weekBirthdays.map(m=>{
-                const bDate=new Date(new Date().getFullYear(),parseDate(m.birth_date).getMonth(),parseDate(m.birth_date).getDate())
-                const weekDays=["Domingo","Segunda","Terça","Quarta","Quinta","Sexta","Sábado"]
-                const dayName=weekDays[bDate.getDay()]
-                const dayNum=String(bDate.getDate()).padStart(2,"0")
-                const monthNum=String(bDate.getMonth()+1).padStart(2,"0")
-                return(
-                  <div key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"6px 0",borderTop:"1px solid rgba(255,255,255,0.2)"}}>
-                    <Avatar name={m.name} photo={m.photo_url} size={30} color="rgba(255,255,255,0.3)"/>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{color:"#fff",fontSize:13,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.name}</div>
-                      <div style={{color:"rgba(255,255,255,0.8)",fontSize:11}}>{dayName}, {dayNum}/{monthNum}</div>
-                    </div>
-                    <button onClick={()=>setLsBdModal(m)} style={{background:"rgba(255,255,255,0.2)",border:"1px solid rgba(255,255,255,0.3)",borderRadius:8,padding:"5px 10px",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:4,flexShrink:0}}><Icon name="whatsapp" size={12}/>Parabéns</button>
-                  </div>
-                )
-              })}
-              {lsBdModal&&<BirthdayMessageModal member={lsBdModal} cellName={cell?.name||""} senderName={session.name} senderRole={session.role} onClose={()=>setLsBdModal(null)}/>}
-            </div>
-          )}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
-            <Stat label="Membros" value={cellMembers.length} color={C.primary} icon="users" sub={cellVisitors.length>0?`+ ${cellVisitors.length} visitantes`:""}/>
-            <Stat label="Encontros" value={cellMeetings.length} color={C.gold} icon="meeting"/>
-          </div>
-          {cell?.growth_goal>0&&(
-            <Card style={{marginBottom:16,border:`1px solid ${C.primary}20`}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-                <div style={{background:C.primary+"15",borderRadius:8,padding:6,display:"flex"}}><Icon name="target" size={16} color={C.primary}/></div>
-                <span style={{fontSize:14,fontWeight:800,color:C.primary}}>Meta de Crescimento</span>
-              </div>
-              <ProgressBar value={cellMembers.length} max={cell.growth_goal} color={C.primary}/>
-              {cellVisitors.length>0&&<div style={{fontSize:11,color:C.purple,marginTop:8}}>🌱 {cellVisitors.length} visitante(s) — potencial de crescimento!</div>}
-            </Card>
-          )}
-          {cell?.next_meeting_date&&(
-            <Card style={{marginBottom:16,border:`1px solid ${C.gold}30`,background:`${C.gold}05`}}>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <div style={{background:C.gold+"15",borderRadius:8,padding:6,display:"flex"}}><Icon name="calendar" size={16} color={C.gold}/></div>
-                <div>
-                  <div style={{fontSize:13,fontWeight:800,color:C.gold}}>Próximo Encontro</div>
-                  <div style={{fontSize:15,fontWeight:900,color:"#0f172a"}}>{fmtDate(cell.next_meeting_date)} às {cell.time}</div>
-                  <div style={{fontSize:11,color:"#64748b"}}>{cell.frequency||"Semanal"} • {cell.neighborhood}</div>
-                </div>
-              </div>
-            </Card>
-          )}
-          <div style={{display:"flex",flexDirection:"column",gap:10}}>
-            {menu.map(item=>(
-              <button key={item.id} onClick={()=>setSub(item.id)} style={{background:"#fff",borderRadius:16,border:"1px solid #e8edf2",padding:"16px",cursor:"pointer",display:"flex",alignItems:"center",gap:14,textAlign:"left",boxShadow:"0 1px 6px rgba(0,0,0,0.05)",transition:"all 0.15s"}}
-                onMouseOver={e=>e.currentTarget.style.transform="translateY(-1px)"} onMouseOut={e=>e.currentTarget.style.transform="translateY(0)"}>
-                <div style={{width:46,height:46,borderRadius:14,background:item.color+"15",display:"flex",alignItems:"center",justifyContent:"center",color:item.color,flexShrink:0}}><Icon name={item.icon} size={22}/></div>
-                <div><div style={{fontSize:15,fontWeight:800,color:"#0f172a"}}>{item.label}</div><div style={{fontSize:12,color:"#94a3b8",marginTop:2}}>{item.desc}</div></div>
-                <div style={{marginLeft:"auto"}}><Icon name="chevron-right" size={16} color="#cbd5e1"/></div>
-              </button>
-            ))}
-          </div>
-        </div>
-      ):(
-        <div style={{flex:1,display:"flex",flexDirection:"column"}}>
-          <div style={{padding:"12px 16px",borderBottom:"1px solid #f1f5f9",display:"flex",alignItems:"center",gap:10,background:"#fff",boxShadow:"0 1px 4px rgba(0,0,0,0.04)"}}>
-            <button onClick={()=>setSub("home")} style={{background:"#f1f5f9",border:"none",borderRadius:10,padding:"7px 10px",cursor:"pointer",color:"#64748b",display:"flex",alignItems:"center",gap:5,fontSize:13,fontWeight:600}}><Icon name="arrow-left" size={15}/>Voltar</button>
-            <span style={{fontSize:15,fontWeight:800,color:"#0f172a"}}>{menu.find(i=>i.id===sub)?.label}</span>
-          </div>
-          <div style={{flex:1,overflowY:"auto",padding:"16px 16px 80px"}}>{renderSub()}</div>
-        </div>
-      )}
-      <ChangePasswordModal open={showChangePw} onClose={()=>setShowChangePw(false)} session={session} showToast={showToast}/>
-    </div>
-  )
-}
-
-function SupervisorDashboard({session,logout,showToast}){
-  const[sub,setSub]=useState("home")
-  const[showChangePw,setShowChangePw]=useState(false)
-  const{data:cells}=useTable("cells")
-  const{data:members}=useTable("members")
-  const{data:requests}=useTable("inactivation_requests")
-  const{data:cellReqs}=useTable("cell_change_requests")
-  const supervised=cells.filter(c=>c.supervisor_id===session.member_id||c.supervisor_id===session.id)
-  const pendingCount=requests.filter(r=>r.status==="pending").length+cellReqs.filter(r=>r.status==="pending").length
-
-  const menu=[
-    {id:"cells",icon:"grid",label:"Células",desc:`${supervised.length} supervisionadas`,color:C.primary},
-    {id:"requests",icon:"inbox",label:"Solicitações",desc:`${pendingCount} pendente(s)`,color:C.danger},
-    {id:"messages",icon:"message",label:"Mensagens",desc:"Comunicar com líderes",color:C.purple},
-    {id:"reports",icon:"bar-chart",label:"Relatórios",desc:"Visão geral",color:C.gold},
-  ]
-
-  function CellsView(){
-    return(<div>
-      {supervised.length===0&&<Card><p style={{color:"#94a3b8",textAlign:"center",margin:0}}>Nenhuma célula atribuída</p></Card>}
-      {supervised.map(cell=>{
-        const mc=members.filter(m=>m.cell_id===cell.id&&m.status==="Membro")
-        const leaders=members.filter(m=>cell.leaders_ids?.includes(m.id))
-        return(<Card key={cell.id} style={{marginBottom:10}}>
-          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6}}>
-            <span style={{fontSize:15,fontWeight:800,color:"#0f172a"}}>{cell.name}</span>
-            <Badge label={cell.cell_type||"Adultos"} color={C.primary}/>
-            <Badge label={cell.cell_status||"Ativa"} color={cell.cell_status==="Inativa"?C.danger:C.success}/>
-          </div>
-          <div style={{fontSize:12,color:"#64748b",marginBottom:6}}>{cell.neighborhood} • {cell.day} às {cell.time}</div>
-          {cell.frequency&&<div style={{fontSize:11,color:C.purple,marginBottom:8}}>🔄 {cell.frequency}{cell.next_meeting_date?` • Próx: ${fmtDate(cell.next_meeting_date)}`:""}</div>}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,fontSize:12,color:"#64748b",marginBottom:cell.growth_goal>0?10:0}}>
-            <span>👤 <b style={{color:"#334155"}}>{leaders.length>0?leaders[0].name.split(" ")[0]:"—"}</b></span>
-            <span>👥 <b style={{color:"#334155"}}>{mc.length} membros</b></span>
-          </div>
-          {cell.growth_goal>0&&<ProgressBar value={mc.length} max={cell.growth_goal} color={C.purple}/>}
-        </Card>)
-      })}
-    </div>)
-  }
-
-  function renderSub(){
-    if(sub==="cells")return<CellsView/>
-    if(sub==="requests")return<AllRequestsPanel session={session} showToast={showToast}/>
-    if(sub==="messages")return<MessagesPanel session={session} showToast={showToast}/>
-    if(sub==="reports")return<ReportsPanel session={session}/>
-    return null
-  }
-
-  return(
-    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column"}}>
-      <header style={{background:`linear-gradient(135deg,${C.darker},${C.primary})`,padding:"14px 18px",display:"flex",alignItems:"center",justifyContent:"space-between",boxShadow:"0 2px 12px rgba(0,0,0,0.2)"}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}><LogoIcon size={30}/><div><div style={{color:"#fff",fontSize:15,fontWeight:800}}>Supervisor</div><div style={{color:"rgba(255,255,255,0.6)",fontSize:11}}>{session.name}</div></div></div>
-        <div style={{display:"flex",gap:6}}>
-          <button onClick={()=>setShowChangePw(true)} style={{background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.15)",borderRadius:10,padding:"7px 10px",cursor:"pointer",color:"rgba(255,255,255,0.8)",display:"flex"}}><Icon name="key" size={15}/></button>
-          <button onClick={logout} style={{background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.15)",borderRadius:10,padding:"7px 12px",cursor:"pointer",color:"rgba(255,255,255,0.8)",display:"flex",alignItems:"center",gap:5,fontSize:12,fontWeight:600}}><Icon name="log-out" size={14}/>Sair</button>
-        </div>
-      </header>
-      {sub==="home"?(
-        <div style={{flex:1,padding:"16px 16px 80px"}}>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>
-            <Stat label="Células" value={supervised.length} color={C.purple} icon="grid"/>
-            <Stat label="Pendências" value={pendingCount} color={C.danger} icon="inbox"/>
-          </div>
-          <div style={{display:"flex",flexDirection:"column",gap:10}}>
-            {menu.map(item=>(<button key={item.id} onClick={()=>setSub(item.id)} style={{background:"#fff",borderRadius:16,border:"1px solid #e8edf2",padding:"16px",cursor:"pointer",display:"flex",alignItems:"center",gap:14,textAlign:"left",boxShadow:"0 1px 6px rgba(0,0,0,0.05)",transition:"all 0.15s"}} onMouseOver={e=>e.currentTarget.style.transform="translateY(-1px)"} onMouseOut={e=>e.currentTarget.style.transform="translateY(0)"}><div style={{width:46,height:46,borderRadius:14,background:item.color+"15",display:"flex",alignItems:"center",justifyContent:"center",color:item.color,flexShrink:0}}><Icon name={item.icon} size={22}/></div><div><div style={{fontSize:15,fontWeight:800,color:"#0f172a"}}>{item.label}</div><div style={{fontSize:12,color:"#94a3b8",marginTop:2}}>{item.desc}</div></div><div style={{marginLeft:"auto"}}><Icon name="chevron-right" size={16} color="#cbd5e1"/></div></button>))}
-          </div>
-        </div>
-      ):(
-        <div style={{flex:1,display:"flex",flexDirection:"column"}}>
-          <div style={{padding:"12px 16px",borderBottom:"1px solid #f1f5f9",display:"flex",alignItems:"center",gap:10,background:"#fff",boxShadow:"0 1px 4px rgba(0,0,0,0.04)"}}>
-            <button onClick={()=>setSub("home")} style={{background:"#f1f5f9",border:"none",borderRadius:10,padding:"7px 10px",cursor:"pointer",color:"#64748b",display:"flex",alignItems:"center",gap:5,fontSize:13,fontWeight:600}}><Icon name="arrow-left" size={15}/>Voltar</button>
-            <span style={{fontSize:15,fontWeight:800,color:"#0f172a"}}>{menu.find(i=>i.id===sub)?.label}</span>
-          </div>
-          <div style={{flex:1,overflowY:"auto",padding:"16px 16px 80px"}}>{renderSub()}</div>
-        </div>
-      )}
-      <ChangePasswordModal open={showChangePw} onClose={()=>setShowChangePw(false)} session={session} showToast={showToast}/>
-    </div>
-  )
-}
-
-// ─── MEMBER PORTAL ────────────────────────────────────────────────────────────
-function MemberPortal({session,logout,showToast}){
-  const[tab,setTab]=useState("dados")
-  const[showChangePw,setShowChangePw]=useState(false)
-  const[commentsModal,setCommentsModal]=useState(null)
-  const{data:cells}=useTable("cells")
-  const{data:members}=useTable("members")
-  const{data:attendanceRaw}=useTable("attendance");const attendance=dedupeAtt(attendanceRaw)
-  const{data:prayers}=useTable("prayer_requests")
-  const[showPrayerModal,setShowPrayerModal]=useState(false)
-  const[prayerForm,setPrayerForm]=useState({request:"",is_private:false})
-
-  const member=members.find(m=>m.id===session.member_id)
-  const cell=member?cells.find(c=>c.id===member.cell_id):null
-  const cellMembers=cell?members.filter(m=>m.cell_id===cell.id&&m.status==="Membro"):[]
-  const leaders=cell?members.filter(m=>cell.leaders_ids?.includes(m.id)):[]
-  const myAttRaw=attendance.filter(a=>a.member_id===session.member_id)
-  // Deduplicate by date — keep the one with "Presente" if exists, otherwise first
-  const myAttMap={}
-  myAttRaw.forEach(a=>{
-    if(!myAttMap[a.date]||a.status==="Presente")myAttMap[a.date]=a
-  })
-  const myAtt=Object.values(myAttMap).sort((a,b)=>b.date.localeCompare(a.date))
-  const pct=myAtt.length?Math.round(myAtt.filter(a=>a.status==="Presente").length/myAtt.length*100):0
-  const myPrayers=prayers.filter(p=>p.member_id===session.member_id)
-  const{data:songs}=useTable("songs")
-  const[lyricsModal,setLyricsModal]=useState(null)
-  const[suggestModal,setSuggestModal]=useState(false)
-  const[suggestForm,setSuggestForm]=useState({title:"",artist:"",lyrics:""})
-
-  const{start,end}=getCurrentWeekDates()
-  const weekBirthday=member?.birth_date&&(()=>{const b=parseDate(member.birth_date);const t=new Date(new Date().getFullYear(),b.getMonth(),b.getDate());return t>=start&&t<=end})()
-
-  async function submitPrayer(){
-    if(!prayerForm.request.trim()){showToast("Descreva o pedido","error");return}
-    await supabase.from("prayer_requests").insert({request:prayerForm.request,is_private:prayerForm.is_private,cell_id:member?.cell_id||null,member_id:session.member_id||null,member_name:session.name,status:"pending"})
-    showToast("Pedido enviado! 🙏");setShowPrayerModal(false);setPrayerForm({request:"",is_private:false})
-  }
-
-  return(
-    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column"}}>
-      <div style={{background:`linear-gradient(135deg,${C.darker},${C.primary})`,padding:"20px 18px 16px",boxShadow:"0 4px 16px rgba(0,0,0,0.2)"}}>
-        {weekBirthday&&<div style={{background:C.gold,borderRadius:10,padding:"8px 12px",marginBottom:12,display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:16}}>🎂</span><span style={{color:"#fff",fontSize:13,fontWeight:700}}>Hoje é seu aniversário? Parabéns! 🎉</span></div>}
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
-          <div style={{display:"flex",alignItems:"center",gap:12}}>
-            <Avatar name={member?.name||session?.name||"?"} photo={member?.photo_url} size={50} color="rgba(255,255,255,0.2)"/>
-            <div><div style={{color:"#fff",fontSize:16,fontWeight:800}}>{member?.name||session?.name}</div><div style={{color:"rgba(255,255,255,0.6)",fontSize:12}}>{cell?.name||"Sem célula"}</div></div>
-          </div>
-          <div style={{display:"flex",gap:6}}>
-            <button onClick={()=>setShowChangePw(true)} style={{background:"rgba(255,255,255,0.1)",border:"none",borderRadius:10,padding:8,cursor:"pointer",color:"rgba(255,255,255,0.8)",display:"flex"}}><Icon name="key" size={16}/></button>
-            <button onClick={logout} style={{background:"rgba(255,255,255,0.1)",border:"none",borderRadius:10,padding:8,cursor:"pointer",color:"rgba(255,255,255,0.8)",display:"flex"}}><Icon name="log-out" size={16}/></button>
-          </div>
-        </div>
-        <div style={{display:"flex",gap:2,background:"rgba(255,255,255,0.08)",borderRadius:14,padding:3}}>
-          {[["dados","Dados"],["celula","Célula"],["presenca","Presença"],["musicas","🎵"],["oracao","Oração"],["aniversario","🎂"]].map(([id,label])=>(
-            <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"8px 4px",borderRadius:12,fontSize:10,fontWeight:700,border:"none",cursor:"pointer",background:tab===id?"#fff":"transparent",color:tab===id?C.primary:"rgba(255,255,255,0.6)",transition:"all 0.15s"}}>{label}</button>
-          ))}
-        </div>
-      </div>
-
-      <div style={{flex:1,padding:"16px 16px 80px",overflowY:"auto"}}>
-        {tab==="dados"&&member&&(
-          <div>
-            <Card style={{marginBottom:12}}>
-              <h3 style={{fontSize:14,fontWeight:800,color:"#0f172a",marginBottom:14}}>Informações Pessoais</h3>
-              {[["Telefone",member.phone],["E-mail",member.email],["Bairro",member.neighborhood],["Status",member.status],["Batizado",member.baptized?`✓ Sim${member.baptism_date?` (${fmtDate(member.baptism_date)})`:""}`:member.baptized===false?"✗ Não":"—"],["Nascimento",fmtDate(member.birth_date)],["Idade",ageOf(member)?`${ageOf(member)} anos`:null]].map(([k,v])=>v?(
-                <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #f1f5f9",fontSize:13}}>
-                  <span style={{color:"#94a3b8",fontWeight:600}}>{k}</span>
-                  <span style={{color:"#334155",fontWeight:700,textAlign:"right",maxWidth:"60%"}}>{v}</span>
-                </div>
-              ):null)}
-            </Card>
-            {(member.father_name||member.mother_name||member.spouse_name)&&(
-              <Card>
-                <h3 style={{fontSize:14,fontWeight:800,color:"#0f172a",marginBottom:12}}>Família</h3>
-                {member.father_name&&<div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #f1f5f9",fontSize:13}}><span style={{color:"#94a3b8",fontWeight:600}}>Pai</span><span style={{color:"#334155",fontWeight:700}}>{member.father_name}</span></div>}
-                {member.mother_name&&<div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #f1f5f9",fontSize:13}}><span style={{color:"#94a3b8",fontWeight:600}}>Mãe</span><span style={{color:"#334155",fontWeight:700}}>{member.mother_name}</span></div>}
-                {member.spouse_name&&<div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",fontSize:13}}><span style={{color:"#94a3b8",fontWeight:600}}>Cônjuge</span><span style={{color:"#334155",fontWeight:700}}>{member.spouse_name}</span></div>}
-              </Card>
-            )}
-          </div>
-        )}
-
-        {tab==="celula"&&(
-          <div>
-            {cell?(<>
-              <Card style={{marginBottom:12}}>
-                <h3 style={{fontSize:14,fontWeight:800,color:"#0f172a",marginBottom:14}}>Minha Célula</h3>
-                {[["Nome",cell.name],["Tipo",cell.cell_type],["Dia",cell.day],["Horário",cell.time],["Periodicidade",cell.frequency],["Próximo encontro",fmtDate(cell.next_meeting_date)],["Bairro",cell.neighborhood],["Endereço",cell.street?`${cell.street}, ${cell.number||"s/n"}`:"—"],["Membros",cellMembers.length.toString()],["Início",fmtDate(cell.started_at)]].map(([k,v])=>v&&v!=="—"?(
-                  <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #f1f5f9",fontSize:13}}>
-                    <span style={{color:"#94a3b8",fontWeight:600}}>{k}</span>
-                    <span style={{color:"#334155",fontWeight:700,textAlign:"right"}}>{v}</span>
-                  </div>
-                ):null)}
-              </Card>
-
-              {leaders.length>0&&(
-                <Card style={{marginBottom:12,border:`1px solid ${C.primary}20`,background:`${C.primary}04`}}>
-                  <h3 style={{fontSize:14,fontWeight:800,color:C.primary,marginBottom:12}}>👤 Meu Líder</h3>
-                  {leaders.map(leader=>(
-                    <div key={leader.id} style={{display:"flex",alignItems:"center",gap:12}}>
-                      <Avatar name={leader.name} photo={leader.photo_url} size={44} color={C.primary}/>
-                      <div style={{flex:1}}>
-                        <div style={{fontSize:14,fontWeight:800,color:"#0f172a"}}>{leader.name}</div>
-                        <div style={{fontSize:12,color:"#64748b"}}>Líder</div>
-                      </div>
-                      {leader.phone&&<a href={whatsappLink(leader.phone)} target="_blank" rel="noopener noreferrer" style={{background:"#dcfce7",border:"1px solid #bbf7d0",borderRadius:10,padding:"8px 14px",display:"flex",alignItems:"center",gap:6,fontSize:13,fontWeight:700,color:"#166534",textDecoration:"none"}}><Icon name="whatsapp" size={15}/>Contato</a>}
-                    </div>
-                  ))}
-                </Card>
-              )}
-
-              {cell.growth_goal>0&&(
-                <Card style={{border:`1px solid ${C.gold}30`}}>
-                  <h3 style={{fontSize:14,fontWeight:800,color:C.gold,marginBottom:12}}>🎯 Meta de Crescimento</h3>
-                  <ProgressBar value={cellMembers.length} max={cell.growth_goal} color={C.gold}/>
-                  <p style={{fontSize:12,color:"#64748b",marginTop:10,textAlign:"center",marginBottom:0}}>A célula quer chegar em {cell.growth_goal} membros. Convide alguém! 🙌</p>
-                </Card>
-              )}
-            </>):(<Card><p style={{color:"#94a3b8",textAlign:"center",margin:0}}>Você não está em nenhuma célula</p></Card>)}
-          </div>
-        )}
-
-        {tab==="presenca"&&(
-          <div>
-            {myAtt.length>0&&(
-              <Card style={{marginBottom:14,background:`linear-gradient(135deg,${C.primary}08,${C.primary}15)`,border:`1px solid ${C.primary}20`}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                  <span style={{fontSize:13,fontWeight:800,color:C.primary}}>Minha Frequência</span>
-                  <span style={{fontSize:24,fontWeight:900,color:pct>=75?C.success:pct>=50?C.warning:C.danger}}>{pct}%</span>
-                </div>
-                <div style={{height:10,background:"rgba(255,255,255,0.5)",borderRadius:5,overflow:"hidden"}}>
-                  <div style={{height:"100%",width:`${pct}%`,background:pct>=75?C.success:pct>=50?C.warning:C.danger,borderRadius:5,transition:"width 0.6s"}}/>
-                </div>
-                <div style={{fontSize:12,color:C.primary,marginTop:8}}>{myAtt.filter(a=>a.status==="Presente").length} presenças de {myAtt.length} encontros</div>
-              </Card>
-            )}
-            {myAtt.length===0&&<div style={{textAlign:"center",padding:"40px 20px"}}><div style={{fontSize:48,marginBottom:12}}>📅</div><p style={{color:"#94a3b8",fontSize:14,fontWeight:600}}>Nenhum encontro registrado</p></div>}
-            {myAtt.map(a=>{
-              const sc=a.status==="Presente"?C.success:a.status==="Ausente"?C.danger:C.warning
-              const si=a.status==="Presente"?"✓":a.status==="Ausente"?"✗":"?"
-              return(
-                <Card key={a.id} style={{marginBottom:8}}>
-                  <div style={{display:"flex",alignItems:"center",gap:12}}>
-                    <div style={{width:36,height:36,borderRadius:10,background:sc+"15",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:900,color:sc,flexShrink:0}}>{si}</div>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:13,fontWeight:700,color:"#0f172a"}}>{fmtDate(a.date)}</div>
-                      {a.theme&&<div style={{fontSize:11,color:"#94a3b8"}}>📖 {a.theme}</div>}
-                      {a.preacher&&<div style={{fontSize:11,color:"#94a3b8"}}>🎤 {a.preacher}</div>}
-                    </div>
-                    <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
-                      <Badge label={a.status} color={sc}/>
-                      {a.status==="Presente"&&(<button onClick={()=>setCommentsModal({date:a.date,cellId:a.cell_id})} style={{background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:8,padding:"3px 8px",cursor:"pointer",color:C.success,fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:3}}><Icon name="comment" size={11}/>Comentar</button>)}
-                    </div>
-                  </div>
-                </Card>
-              )
-            })}
-          </div>
-        )}
-
-        {tab==="musicas"&&(
-          <div>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
-              <h3 style={{fontSize:16,fontWeight:800,color:"#0f172a",margin:0}}>🎵 Repertório</h3>
-              <Btn icon="plus" size="sm" variant="gold" onClick={()=>setSuggestModal(true)}>Sugerir</Btn>
-            </div>
-            <p style={{fontSize:13,color:"#64748b",marginBottom:16}}>Músicas aprovadas para a célula</p>
-            {songs.filter(s=>(s.status||"approved")==="approved").length===0&&(
-              <div style={{textAlign:"center",padding:"40px 20px"}}>
-                <div style={{fontSize:48,marginBottom:12}}>🎵</div>
-                <p style={{color:"#94a3b8",fontSize:14,fontWeight:600}}>Nenhuma música no repertório ainda</p>
-              </div>
-            )}
-            {songs.filter(s=>(s.status||"approved")==="approved").map(s=>(
-              <Card key={s.id} style={{marginBottom:10,borderLeft:`3px solid ${C.primary}`}}>
-                <div style={{display:"flex",alignItems:"center",gap:12}}>
-                  <div style={{width:40,height:40,borderRadius:12,background:C.primary+"15",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:C.primary}}>
-                    <Icon name="music" size={18}/>
-                  </div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:14,fontWeight:800,color:"#0f172a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.title}</div>
-                    {s.artist&&<div style={{fontSize:12,color:"#94a3b8"}}>{s.artist}</div>}
-                  </div>
-                  <div style={{display:"flex",gap:6}}>
-                    {s.lyrics&&<button onClick={()=>setLyricsModal(s)} style={{background:C.gold+"15",border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer",color:C.gold,fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:4}}><Icon name="music" size={13}/>Letra</button>}
-                    {s.link&&<a href={s.link} target="_blank" rel="noopener noreferrer" style={{background:C.primary+"15",borderRadius:8,padding:7,display:"flex",color:C.primary,textDecoration:"none"}}><Icon name="link" size={14}/></a>}
-                  </div>
-                </div>
-              </Card>
-            ))}
-
-            {lyricsModal&&(
-              <Modal open title={`🎵 ${lyricsModal.title}`} onClose={()=>setLyricsModal(null)}>
-                {lyricsModal.artist&&<p style={{fontSize:13,color:"#94a3b8",fontWeight:600,marginBottom:16}}>{lyricsModal.artist}</p>}
-                <div style={{background:"#f8fafc",borderRadius:14,padding:"16px 18px",border:"1px solid #e8edf2",maxHeight:400,overflowY:"auto"}}>
-                  <pre style={{fontSize:14,color:"#334155",lineHeight:1.9,fontFamily:"'Outfit',sans-serif",whiteSpace:"pre-wrap",margin:0}}>{lyricsModal.lyrics}</pre>
-                </div>
-                {lyricsModal.link&&<a href={lyricsModal.link} target="_blank" rel="noopener noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:C.primary,borderRadius:12,padding:"11px",color:"#fff",textDecoration:"none",fontSize:13,fontWeight:700,marginTop:14}}><Icon name="link" size={15}/>Ouvir música</a>}
-              </Modal>
-            )}
-
-            <Modal open={suggestModal} onClose={()=>{setSuggestModal(false);setSuggestForm({title:"",artist:"",lyrics:""})}} title="Sugerir Música 🎵">
-              <p style={{fontSize:13,color:"#64748b",marginBottom:14}}>Sua sugestão será enviada para aprovação do líder.</p>
-              <Inp label="Nome da Música *" value={suggestForm.title} onChange={v=>setSuggestForm(p=>({...p,title:v}))} required placeholder="Ex: Não Desista de Você"/>
-              <Inp label="Cantor / Ministério *" value={suggestForm.artist} onChange={v=>setSuggestForm(p=>({...p,artist:v}))} required placeholder="Ex: Ministério Zoe"/>
-              <Textarea label="Letra *" value={suggestForm.lyrics} onChange={v=>setSuggestForm(p=>({...p,lyrics:v}))} placeholder="Cole a letra completa aqui..." rows={6}/>
-              <Btn full variant="gold" onClick={async()=>{
-                if(!suggestForm.title.trim()||!suggestForm.artist.trim()||!suggestForm.lyrics.trim()){showToast("Nome, cantor e letra são obrigatórios","error");return}
-                await supabase.from("songs").insert({title:suggestForm.title.trim(),artist:suggestForm.artist.trim(),lyrics:suggestForm.lyrics.trim(),link:"",status:"pending",created_by:session.id,created_by_name:session.name})
-                showToast("Sugestão enviada! O líder irá avaliar 🎵")
-                setSuggestModal(false);setSuggestForm({title:"",artist:"",lyrics:""})
-              }}>Enviar Sugestão</Btn>
-            </Modal>
-          </div>
-        )}
-
-        {tab==="aniversario"&&(
-          <div>
-            <h3 style={{fontSize:16,fontWeight:800,color:"#0f172a",marginBottom:6}}>🎂 Aniversariantes</h3>
-            <p style={{fontSize:13,color:"#64748b",marginBottom:16}}>Pessoas da sua célula que estão de parabéns!</p>
-
-            {/* SEMANA */}
-            {(()=>{
-              const{start,end}=getCurrentWeekDates()
-              const allCellPeople=[...cellMembers,...cellVisitors]
-              const weekBdays=allCellPeople.filter(m=>{
-                if(!m.birth_date)return false
-                const b=parseDate(m.birth_date)
-                const t=new Date(new Date().getFullYear(),b.getMonth(),b.getDate())
-                return t>=start&&t<=end
-              })
-              const weekDays=["Domingo","Segunda","Terça","Quarta","Quinta","Sexta","Sábado"]
-              return(
-                <div style={{marginBottom:20}}>
-                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-                    <div style={{width:4,height:20,background:C.gold,borderRadius:2}}/>
-                    <span style={{fontSize:13,fontWeight:800,color:"#0f172a"}}>Esta Semana</span>
-                    {weekBdays.length>0&&<span style={{background:C.gold,color:"#fff",fontSize:11,fontWeight:700,padding:"1px 8px",borderRadius:10}}>{weekBdays.length}</span>}
-                  </div>
-                  {weekBdays.length===0&&(
-                    <div style={{background:"#f8fafc",borderRadius:14,padding:"20px",textAlign:"center",border:"1px solid #f1f5f9"}}>
-                      <div style={{fontSize:32,marginBottom:8}}>🎂</div>
-                      <p style={{fontSize:13,color:"#94a3b8",fontWeight:600}}>Nenhum aniversariante esta semana</p>
-                    </div>
-                  )}
-                  {weekBdays.map(m=>{
-                    const bDate=new Date(new Date().getFullYear(),parseDate(m.birth_date).getMonth(),parseDate(m.birth_date).getDate())
-                    const dayName=weekDays[bDate.getDay()]
-                    const dayNum=String(bDate.getDate()).padStart(2,"0")
-                    const monthNum=String(bDate.getMonth()+1).padStart(2,"0")
-                    const firstName=m.name.split(" ")[0]
-                    const msg=`Olá ${firstName}! 🎂🎉 A Célula ${cell?.name} te deseja um feliz aniversário! Que Deus abençoe muito a sua vida. Parabéns! 🙏❤️`
-                    const wppLink=m.phone?`https://wa.me/55${m.phone.replace(/\D/g,"")}?text=${encodeURIComponent(msg)}`:null
-                    const isToday=bDate.toDateString()===new Date().toDateString()
-                    return(
-                      <Card key={m.id} style={{marginBottom:10,border:`1.5px solid ${isToday?C.gold:"#fde68a"}`,background:isToday?"#fffbeb":"#fffef5"}}>
-                        <div style={{display:"flex",alignItems:"center",gap:12}}>
-                          <Avatar name={m.name} photo={m.photo_url} size={46} color={C.gold}/>
-                          <div style={{flex:1,minWidth:0}}>
-                            {isToday&&<div style={{fontSize:10,fontWeight:800,color:C.gold,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:2}}>🎉 Hoje!</div>}
-                            <div style={{fontSize:14,fontWeight:800,color:"#0f172a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.name}</div>
-                            <div style={{fontSize:12,color:"#92400e",fontWeight:600}}>{isToday?"Parabéns! 🎂":`${dayName}, ${dayNum}/${monthNum}`}</div>
-                            {ageTurning(m.birth_date)&&<div style={{fontSize:11,color:"#b45309"}}>Completa {ageTurning(m.birth_date)} anos</div>}
-                          </div>
-                          {wppLink&&(
-                            <a href={wppLink} target="_blank" rel="noopener noreferrer" style={{background:"#25d366",borderRadius:12,padding:"8px 12px",display:"flex",alignItems:"center",gap:5,color:"#fff",textDecoration:"none",fontSize:12,fontWeight:700,flexShrink:0}}>
-                              <Icon name="whatsapp" size={14}/>Parabéns
-                            </a>
-                          )}
-                        </div>
-                      </Card>
-                    )
-                  })}
-                </div>
-              )
-            })()}
-
-            {/* MÊS */}
-            {(()=>{
-              const currentMonth=getCurrentMonth()
-              const monthNames=["","Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
-              const monthBdays=[...cellMembers,...cellVisitors].filter(m=>m.birth_date&&getMonthBirthday(m.birth_date)===currentMonth)
-                .sort((a,b)=>parseDate(a.birth_date).getDate()-parseDate(b.birth_date).getDate())
-              return(
-                <div>
-                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-                    <div style={{width:4,height:20,background:C.primary,borderRadius:2}}/>
-                    <span style={{fontSize:13,fontWeight:800,color:"#0f172a"}}>Todo o Mês de {monthNames[currentMonth]}</span>
-                    {monthBdays.length>0&&<span style={{background:C.primary,color:"#fff",fontSize:11,fontWeight:700,padding:"1px 8px",borderRadius:10}}>{monthBdays.length}</span>}
-                  </div>
-                  {monthBdays.length===0&&(
-                    <div style={{background:"#f8fafc",borderRadius:14,padding:"20px",textAlign:"center",border:"1px solid #f1f5f9"}}>
-                      <p style={{fontSize:13,color:"#94a3b8",fontWeight:600}}>Nenhum aniversariante este mês</p>
-                    </div>
-                  )}
-                  {monthBdays.map(m=>{
-                    const bDate=parseDate(m.birth_date)
-                    const dayNum=String(bDate.getDate()).padStart(2,"0")
-                    const firstName=m.name.split(" ")[0]
-                    const msg=`Olá ${firstName}! 🎂🎉 A Célula ${cell?.name} te deseja um feliz aniversário! Que Deus abençoe muito a sua vida. Parabéns! 🙏❤️`
-                    const wppLink=m.phone?`https://wa.me/55${m.phone.replace(/\D/g,"")}?text=${encodeURIComponent(msg)}`:null
-                    const{start,end}=getCurrentWeekDates()
-                    const thisYear=new Date(new Date().getFullYear(),bDate.getMonth(),bDate.getDate())
-                    const isThisWeek=thisYear>=start&&thisYear<=end
-                    return(
-                      <div key={m.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderTop:"1px solid #f1f5f9"}}>
-                        <div style={{width:36,height:36,borderRadius:10,background:C.primary+"15",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                          <span style={{fontSize:14,fontWeight:900,color:C.primary}}>{dayNum}</span>
-                        </div>
-                        <Avatar name={m.name} photo={m.photo_url} size={34} color={C.primary}/>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontSize:13,fontWeight:700,color:"#0f172a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.name}</div>
-                          <div style={{fontSize:11,color:"#64748b"}}>{isThisWeek?"🎉 Esta semana!":fmtDate(m.birth_date)}{ageTurning(m.birth_date)?` • ${ageTurning(m.birth_date)} anos`:""}</div>
-                        </div>
-                        {wppLink&&(
-                          <a href={wppLink} target="_blank" rel="noopener noreferrer" style={{background:"#dcfce7",borderRadius:8,padding:"5px 8px",display:"flex",alignItems:"center",gap:4,color:"#166534",textDecoration:"none",fontSize:11,fontWeight:700,flexShrink:0}}>
-                            <Icon name="whatsapp" size={12}/>Wish
-                          </a>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              )
-            })()}
-          </div>
-        )}
-
-        {tab==="oracao"&&(
-          <div>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-              <h3 style={{fontSize:16,fontWeight:800,color:"#0f172a",margin:0}}>Pedidos de Oração 🙏</h3>
-              <Btn icon="plus" size="sm" variant="gold" onClick={()=>setShowPrayerModal(true)}>Novo</Btn>
-            </div>
-            {myPrayers.length===0&&(<div style={{textAlign:"center",padding:"40px 20px"}}><div style={{fontSize:48,marginBottom:12}}>🙏</div><p style={{color:"#94a3b8",fontSize:14,fontWeight:600}}>Você não tem pedidos de oração</p><Btn variant="gold" onClick={()=>setShowPrayerModal(true)} style={{marginTop:8}}>Fazer um Pedido</Btn></div>)}
-            {myPrayers.map(p=>(
-              <Card key={p.id} style={{marginBottom:10,borderLeft:`3px solid ${p.status==="prayed"?C.success:C.gold}`}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-                  <span style={{fontSize:11,color:"#94a3b8"}}>{fmtDate(p.created_at?.split("T")[0])}</span>
-                  <div style={{display:"flex",gap:4}}>
-                    <Badge label={p.status==="prayed"?"✓ Orado":"Aguardando"} color={p.status==="prayed"?C.success:C.gold}/>
-                    {p.is_private&&<Badge label="🔒" color="#64748b"/>}
-                  </div>
-                </div>
-                <p style={{fontSize:13,color:"#334155",margin:0,lineHeight:1.55,background:"#f8fafc",borderRadius:10,padding:"10px 12px"}}>{p.request}</p>
-              </Card>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <Modal open={showPrayerModal} onClose={()=>setShowPrayerModal(false)} title="Novo Pedido de Oração">
-        <div style={{textAlign:"center",marginBottom:16}}><div style={{fontSize:40}}>🙏</div></div>
-        <Textarea label="Seu Pedido" value={prayerForm.request} onChange={v=>setPrayerForm(p=>({...p,request:v}))} placeholder="Compartilhe seu pedido..." rows={4}/>
-        <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",background:"#f8fafc",border:"1.5px solid #e2e8f0",borderRadius:12,padding:12,marginBottom:16}}>
-          <input type="checkbox" checked={prayerForm.is_private} onChange={e=>setPrayerForm(p=>({...p,is_private:e.target.checked}))} style={{width:16,height:16,accentColor:C.primary}}/>
-          <div><div style={{fontSize:13,fontWeight:700,color:"#334155"}}>🔒 Pedido Privado</div><div style={{fontSize:11,color:"#94a3b8"}}>Somente líderes poderão ver</div></div>
-        </label>
-        <Btn full onClick={submitPrayer} variant="gold">Enviar Pedido 🙏</Btn>
-      </Modal>
-
-      {commentsModal&&<CommentsModal date={commentsModal.date} cellId={commentsModal.cellId} session={session} showToast={showToast} onClose={()=>setCommentsModal(null)}/>}
-      <ChangePasswordModal open={showChangePw} onClose={()=>setShowChangePw(false)} session={session} showToast={showToast}/>
-    </div>
-  )
-}
