@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react"
-import { supabase } from "./supabase.js"
+import { supabase, setAuthToken } from "./supabase.js"
 
 // ─── CONSTANTES ───────────────────────────────────────────────────────────────
 const ROLES = { admin:"Gestor", supervisor:"Supervisor", leader:"Líder", secretary:"Secretário", member:"Membro" }
@@ -421,20 +421,24 @@ export default function App(){
   useEffect(()=>{
     try{
       const saved=localStorage.getItem("celulas_session")
-      if(saved){
+      const temCracha=!!localStorage.getItem("celulas_token")
+      if(saved&&temCracha){
         const user=JSON.parse(saved)
         if(user&&user.id){
           setSession(user)
           const map={admin:"admin",supervisor:"supervisor",leader:"leader",secretary:"secretary",member:"member"}
           setPage(map[user.role]||"member")
         }
+      }else if(saved&&!temCracha){
+        // sessão antiga sem crachá (versão anterior do login) — pede login de novo
+        localStorage.removeItem("celulas_session")
       }
     }catch(e){}
     setLoading(false)
   },[])
 
   const showToast=useCallback((msg,type="success")=>{setToast({msg,type});setTimeout(()=>setToast({msg:"",type:"success"}),3500)},[])
-  function doLogout(){setSession(null);setPage("login");localStorage.removeItem("celulas_session")}
+  function doLogout(){setSession(null);setPage("login");localStorage.removeItem("celulas_session");setAuthToken(null)}
 
   async function doLogin(user){
     if(user.active===false)return
@@ -529,35 +533,14 @@ function LoginPage({onLogin,showToast}){
 
   async function handleLogin(e){
     e.preventDefault();setErr("");setLoading(true)
-    const input=login.trim()
-    let data=null
-    const cpfNorm=input.replace(/\D/g,"")
-    if(cpfNorm.length===11){
-      const r1=await supabase.from("users").select("*").eq("cpf",cpfNorm).single()
-      if(r1.data)data=r1.data
-      if(!data){const r2=await supabase.from("users").select("*").eq("cpf",fmtCPF(cpfNorm)).single();if(r2.data)data=r2.data}
-    }
-    if(!data){
-      // O telefone e gravado formatado - "(21) 99201-8539". Procurar os ultimos 8
-      // digitos direto no texto nunca casava: o hifen parte os digitos no meio.
-      // Comparamos so os numeros, dos dois lados.
-      const phoneNorm=input.replace(/\D/g,"")
-      if(phoneNorm.length>=8){
-        const{data:members}=await supabase.from("members").select("id,phone")
-        const so=v=>(v||"").replace(/\D/g,"")
-        const lista=(members||[]).filter(x=>so(x.phone).length>=8)
-        const member=lista.find(x=>so(x.phone)===phoneNorm)||lista.find(x=>so(x.phone).endsWith(phoneNorm.slice(-8)))
-        if(member){const{data:u}=await supabase.from("users").select("*").eq("member_id",member.id).maybeSingle();if(u)data=u}
-      }
-    }
-    if(!data){
-      const{data:members}=await supabase.from("members").select("id,email").ilike("email",input)
-      if(members&&members.length>0){const member=members[0];const{data:u}=await supabase.from("users").select("*").eq("member_id",member.id).maybeSingle();if(u)data=u}
-    }
-    if(!data){setErr("Usuário não encontrado. Verifique CPF, telefone ou e-mail.");setLoading(false);return}
-    if(data.active===false){setErr("Entre em contato com o líder da sua célula.");setLoading(false);return}
-    if(atob64(data.password_hash)!==pw){setErr("Senha incorreta");setLoading(false);return}
-    setLoading(false);onLogin(data)
+    // O banco confere a senha (bcrypt) e devolve um crachá assinado. Nenhuma senha
+    // trafega ou é comparada aqui no navegador, e o navegador não lê a tabela de senhas.
+    const{data,error}=await supabase.rpc("login",{ident:login.trim(),senha:pw})
+    setLoading(false)
+    if(error){setErr("Não consegui entrar agora. Tente de novo em instantes.");return}
+    if(!data||data.erro){setErr(data?.erro||"Usuário não encontrado.");return}
+    setAuthToken(data.token)
+    onLogin(data.user)
   }
 
   const BG=`linear-gradient(165deg,#0F1B2D 0%,#1B4F8A 55%,#2F6FBF 100%)`
@@ -674,10 +657,10 @@ function ChangePasswordModal({open,onClose,session,showToast}){
   async function save(){
     if(newPw.length<6){showToast("Mínimo 6 caracteres","error");return}
     if(newPw!==confirmPw){showToast("Senhas não conferem","error");return}
-    const{data}=await supabase.from("users").select("password_hash").eq("id",session.id).single()
-    if(!data||atob64(data.password_hash)!==oldPw){showToast("Senha atual incorreta","error");return}
-    const{error:errPw}=await supabase.from("users").update({password_hash:btoa64(newPw)}).eq("id",session.id)
-    if(errPw){showToast("Não consegui alterar a senha: "+errPw.message,"error");return}
+    // O banco confere a senha atual (bcrypt) e grava a nova com hash.
+    const{data,error}=await supabase.rpc("trocar_senha",{senha_atual:oldPw,nova:newPw})
+    if(error){showToast("Não consegui alterar a senha agora","error");return}
+    if(!data||data.erro){showToast(data?.erro||"Senha atual incorreta","error");return}
     showToast("Senha alterada!");setOldPw("");setNewPw("");setConfirmPw("");onClose()
   }
   return(
@@ -2163,7 +2146,7 @@ function MembersPanel({session,showToast}){
       const{data:ja}=await supabase.from("users").select("id").eq("member_id",memberId).maybeSingle()
       if(ja)return"ja tinha"
       const{error}=await supabase.from("users").insert({member_id:memberId,cpf:cpfNorm||null,password_hash:btoa64(SENHA_PADRAO),name:form.name.trim().toUpperCase(),role:"member",cell_id:form.cell_id||null,active:true})
-      if(!error)return"criado"
+      if(!error){await supabase.rpc("def_senha_membro",{p_member_id:memberId,p_senha:SENHA_PADRAO});return"criado"}
       // a coluna cpf da tabela users ainda e obrigatoria no banco
       if(error.code==="23502")return"O banco ainda exige CPF para criar acesso. Cadastro salvo, mas sem login."
       return"Cadastro salvo, mas o acesso falhou: "+error.message
@@ -2203,7 +2186,8 @@ function MembersPanel({session,showToast}){
 
   async function resetPw(){
     if(newPw.length<6){showToast("Senha muito curta","error");return}
-    await supabase.from("users").update({password_hash:btoa64(newPw)}).eq("member_id",pwModal)
+    const{data,error}=await supabase.rpc("def_senha_membro",{p_member_id:pwModal,p_senha:newPw})
+    if(error||(data&&data.erro)){showToast(data?.erro||"Não consegui redefinir","error");return}
     showToast("Senha redefinida!");setPwModal(null);setNewPw("")
   }
 
