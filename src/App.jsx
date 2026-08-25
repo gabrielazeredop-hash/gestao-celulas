@@ -410,6 +410,8 @@ function LGPDModal({onAccept}){
 export default function App(){
   const[session,setSession]=useState(null)
   const[page,setPage]=useState("login")
+  // link de escolha de louvor abre sem login: ?louvor=<id>
+  const[pollLouvor]=useState(()=>{try{return new URLSearchParams(window.location.search).get("louvor")}catch{return null}})
   const[toast,setToast]=useState({msg:"",type:"success"})
   const[showLGPD,setShowLGPD]=useState(false)
   const[pendingSession,setPendingSession]=useState(null)
@@ -509,8 +511,10 @@ export default function App(){
       `}</style>
       <Toast msg={toast.msg} type={toast.type}/>
       {showLGPD&&<LGPDModal onAccept={handleLGPDAccept}/>}
+      {pollLouvor?<EscolhaLouvorPage pollId={pollLouvor}/>:<>
       {page==="login"&&<LoginPage onLogin={doLogin} showToast={showToast}/>}
       {session&&page!=="login"&&<AppShell session={session} logout={doLogout} showToast={showToast}/>}
+      </>}
     </div>
   )
 }
@@ -2495,6 +2499,267 @@ function BirthdayMessageModal({member,cellName,senderName,senderRole,onClose}){
 }
 
 // ─── MEETINGS PANEL ───────────────────────────────────────────────────────────
+// ── SELEÇÃO DE LOUVOR ────────────────────────────────────────────────────────
+// O líder separa 5 ou 6 músicas de um encontro e manda para alguém escolher.
+// A pessoa abre pelo link, entra com o telefone dela e marca as que quiser —
+// as escolhidas entram sozinhas no encontro, sem ninguém redigitar nada.
+// Tela que a pessoa abre pelo link do WhatsApp para escolher o louvor.
+// Ela confirma quem é pelo telefone (sem senha) e marca as músicas. As escolhidas
+// entram sozinhas no encontro.
+function EscolhaLouvorPage({pollId}){
+  const[poll,setPoll]=useState(null)
+  const[musicas,setMusicas]=useState([])
+  const[erro,setErro]=useState("")
+  const[carregando,setCarregando]=useState(true)
+  const[tel,setTel]=useState("")
+  const[liberado,setLiberado]=useState(false)
+  const[marcadas,setMarcadas]=useState([])
+  const[salvando,setSalvando]=useState(false)
+  const[pronto,setPronto]=useState(false)
+  const[verLetra,setVerLetra]=useState(null)
+
+  useEffect(()=>{(async()=>{
+    const{data,error}=await supabase.from("song_polls").select("*").eq("id",pollId).maybeSingle()
+    if(error||!data){setErro("Não encontrei essa seleção. Pode ser que o link esteja errado ou tenha sido apagado.");setCarregando(false);return}
+    setPoll(data)
+    if(data.status==="respondida"){setPronto(true)}
+    const{data:ss}=await supabase.from("songs").select("*").in("id",data.song_ids||[])
+    setMusicas(ss||[])
+    setCarregando(false)
+  })()},[pollId])
+
+  function confirmar(){
+    const digitado=tel.replace(/\D/g,"")
+    if(digitado.length<8){setErro("Digite o telefone completo, com DDD");return}
+    setErro("")
+    ;(async()=>{
+      const{data:m}=await supabase.from("members").select("id,phone").eq("id",poll.member_id).maybeSingle()
+      const guardado=(m?.phone||"").replace(/\D/g,"")
+      if(!guardado){setErro("Seu cadastro está sem telefone. Peça ao líder para preencher.");return}
+      if(guardado.slice(-8)!==digitado.slice(-8)){setErro("Esse telefone não confere com o cadastro.");return}
+      setLiberado(true)
+    })()
+  }
+
+  async function enviarEscolha(){
+    if(salvando)return
+    setSalvando(true)
+    const titulos=marcadas.map(id=>musicas.find(s=>s.id===id)?.title).filter(Boolean)
+    const{error}=await supabase.from("song_polls").update({
+      chosen_ids:marcadas,status:"respondida",answered_at:new Date().toISOString()
+    }).eq("id",poll.id)
+    if(error){setSalvando(false);setErro("Não consegui salvar: "+error.message);return}
+    // as escolhidas entram direto no encontro
+    if(poll.meeting_id){
+      const{data:mt}=await supabase.from("meetings").select("songs").eq("id",poll.meeting_id).maybeSingle()
+      const atuais=(mt?.songs||"").split(", ").map(x=>x.trim()).filter(Boolean)
+      const juntas=[...new Set([...atuais,...titulos])].join(", ")
+      await supabase.from("meetings").update({songs:juntas}).eq("id",poll.meeting_id)
+    }
+    setSalvando(false);setPronto(true)
+  }
+
+  const caixa={maxWidth:520,margin:"0 auto",padding:"20px 16px 40px"}
+  if(carregando)return<div style={caixa}><p style={{color:"#94a3b8",textAlign:"center"}}>Carregando...</p></div>
+  if(erro&&!poll)return<div style={caixa}><Card><p style={{color:C.danger,margin:0,fontSize:14}}>{erro}</p></Card></div>
+
+  if(pronto)return(
+    <div style={caixa}>
+      <Card style={{textAlign:"center",background:"#ecfdf5",border:"1px solid #a7f3d0"}}>
+        <div style={{fontSize:42,marginBottom:8}}>🎵</div>
+        <h2 style={{fontSize:18,fontWeight:800,color:"#065f46",margin:"0 0 6px"}}>Obrigado!</h2>
+        <p style={{fontSize:13.5,color:"#047857",margin:0,lineHeight:1.6}}>
+          Sua escolha foi registrada e já entrou no encontro. Pode fechar esta página.
+        </p>
+      </Card>
+    </div>
+  )
+
+  if(!liberado)return(
+    <div style={caixa}>
+      <div style={{textAlign:"center",marginBottom:20}}>
+        <LogoIcon size={44}/>
+        <h1 style={{fontSize:19,fontWeight:800,color:"#0f172a",margin:"10px 0 4px"}}>Escolha do louvor</h1>
+        <p style={{fontSize:13,color:"#64748b",margin:0}}>Olá, {poll.member_name}!</p>
+      </div>
+      <Card>
+        <p style={{fontSize:13.5,color:"#334155",lineHeight:1.6,margin:"0 0 14px"}}>
+          Para continuar, confirme seu telefone — o mesmo que está no seu cadastro da célula.
+        </p>
+        <Inp label="Seu telefone (com DDD)" value={tel} onChange={v=>setTel(fmtPhone(v))} placeholder="(00) 00000-0000"/>
+        {erro&&<p style={{fontSize:12.5,color:C.danger,margin:"0 0 10px"}}>{erro}</p>}
+        <Btn full onClick={confirmar} icon="check">Continuar</Btn>
+      </Card>
+    </div>
+  )
+
+  const faltam=poll.escolher-marcadas.length
+  return(
+    <div style={caixa}>
+      <div style={{marginBottom:16}}>
+        <h1 style={{fontSize:19,fontWeight:800,color:"#0f172a",margin:"0 0 4px"}}>Escolha {poll.escolher} música{poll.escolher>1?"s":""}</h1>
+        <p style={{fontSize:13,color:"#64748b",margin:0}}>
+          {marcadas.length} de {poll.escolher} marcada{marcadas.length===1?"":"s"}
+          {faltam>0?` · faltam ${faltam}`:" · pronto!"}
+        </p>
+      </div>
+
+      {musicas.map(s=>{
+        const sel=marcadas.includes(s.id)
+        const cheio=marcadas.length>=poll.escolher&&!sel
+        return(
+          <Card key={s.id} style={{marginBottom:10,border:`2px solid ${sel?C.primary:"#e8edf2"}`,opacity:cheio?.55:1}}>
+            <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+              <button type="button" disabled={cheio} onClick={()=>setMarcadas(p=>sel?p.filter(x=>x!==s.id):[...p,s.id])}
+                style={{width:24,height:24,borderRadius:"50%",border:`2px solid ${sel?C.primary:"#cbd5e1"}`,background:sel?C.primary:"#fff",cursor:cheio?"not-allowed":"pointer",flexShrink:0,marginTop:2,display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>
+                {sel&&<span style={{color:"#fff",fontSize:13,fontWeight:900,lineHeight:1}}>✓</span>}
+              </button>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:14.5,fontWeight:800,color:"#0f172a"}}>{s.title}</div>
+                <div style={{fontSize:12,color:"#94a3b8",marginBottom:8}}>{s.artist||"—"}</div>
+                <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                  {(s.yt||s.link)&&<a href={s.yt||s.link} target="_blank" rel="noopener noreferrer" style={{fontSize:11.5,fontWeight:700,background:"#fee2e2",color:"#991b1b",padding:"5px 10px",borderRadius:8,textDecoration:"none"}}>▶ Ouvir</a>}
+                  {s.cifra&&<a href={s.cifra} target="_blank" rel="noopener noreferrer" style={{fontSize:11.5,fontWeight:700,background:"#fef3c7",color:"#92400e",padding:"5px 10px",borderRadius:8,textDecoration:"none"}}>🎸 Cifra</a>}
+                  {s.lyrics&&<button type="button" onClick={()=>setVerLetra(s)} style={{fontSize:11.5,fontWeight:700,background:"#f1f5f9",color:"#475569",padding:"5px 10px",borderRadius:8,border:"none",cursor:"pointer"}}>📖 Letra</button>}
+                </div>
+              </div>
+            </div>
+          </Card>
+        )
+      })}
+
+      {erro&&<p style={{fontSize:12.5,color:C.danger,margin:"0 0 10px"}}>{erro}</p>}
+      <Btn full disabled={marcadas.length!==poll.escolher||salvando} onClick={enviarEscolha} icon="check">
+        {salvando?"Enviando...":`Confirmar escolha (${marcadas.length}/${poll.escolher})`}
+      </Btn>
+
+      <Modal open={!!verLetra} onClose={()=>setVerLetra(null)} title={verLetra?.title||""}>
+        <p style={{fontSize:13.5,color:"#334155",whiteSpace:"pre-wrap",lineHeight:1.7,margin:0}}>{verLetra?.lyrics}</p>
+      </Modal>
+    </div>
+  )
+}
+
+function SelecaoLouvorModal({meeting,cells,members,songs,session,showToast,onClose}){
+  const[escolhidas,setEscolhidas]=useState([])
+  const[quantas,setQuantas]=useState(2)
+  const[paraQuem,setParaQuem]=useState(null)
+  const[buscando,setBuscando]=useState(false)
+  const[busca,setBusca]=useState("")
+  const[enviando,setEnviando]=useState(false)
+  const[enviado,setEnviado]=useState(null)
+
+  const cell=cells.find(c=>c.id===meeting.cell_id)
+  const aprovadas=songs.filter(s=>(s.status||"approved")==="approved")
+  const filtradas=aprovadas.filter(s=>{
+    const t=busca.trim().toLowerCase()
+    return !t||s.title.toLowerCase().includes(t)||(s.artist||"").toLowerCase().includes(t)
+  })
+  const podeEnviar=escolhidas.length>=2&&paraQuem&&quantas>=1&&quantas<escolhidas.length
+
+  function alternar(id){
+    setEscolhidas(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id])
+  }
+
+  async function enviar(){
+    if(enviando)return
+    setEnviando(true)
+    const{data,error}=await supabase.from("song_polls").insert({
+      meeting_id:meeting.id,cell_id:meeting.cell_id,song_ids:escolhidas,escolher:quantas,
+      member_id:paraQuem.id,member_name:paraQuem.name,
+      sent_by:session.id,sent_by_name:session.name,status:"pendente"
+    }).select().single()
+    setEnviando(false)
+    if(error||!data){showToast("Não consegui criar a seleção: "+(error?.message||"tente de novo"),"error");return}
+    setEnviado(data)
+  }
+
+  if(enviado){
+    const link=window.location.origin+"/?louvor="+enviado.id
+    const primeiro=paraQuem.name.split(" ")[0]
+    const msg="Paz, "+primeiro+"! 🎵\n\nSeparei "+escolhidas.length+" músicas para o encontro de "+fmtDate(meeting.date)+(cell?" da célula "+cell.name:"")+".\n\nEscolha "+quantas+" por aqui:\n"+link+"\n\nDá pra ouvir e ver a letra de cada uma antes de decidir."
+    const zap="https://wa.me/"+(paraQuem.phone?"55"+paraQuem.phone.replace(/\D/g,""):"")+"?text="+encodeURIComponent(msg)
+    return(
+      <Modal open title="Seleção criada!" onClose={onClose}>
+        <div style={{background:"#ecfdf5",border:"1px solid #a7f3d0",borderRadius:12,padding:"12px 14px",marginBottom:14,fontSize:13,color:"#065f46"}}>
+          ✓ {escolhidas.length} músicas enviadas para <b>{paraQuem.name}</b> escolher {quantas}.
+        </div>
+        <div style={{background:"#f8fafc",border:"1px solid #e2e8f0",borderRadius:12,padding:"12px 14px",marginBottom:14,fontSize:13,whiteSpace:"pre-wrap",lineHeight:1.6,color:"#0f172a"}}>{msg}</div>
+        <div style={{display:"flex",gap:8}}>
+          <Btn full variant="success" icon="whatsapp" onClick={()=>window.open(zap,"_blank")}>
+            {paraQuem.phone?"Mandar para "+primeiro:"Escolher no WhatsApp"}
+          </Btn>
+          <Btn variant="secondary" icon="copy" onClick={async()=>{try{await navigator.clipboard.writeText(msg);showToast("Copiado!")}catch{showToast("Selecione o texto acima","error")}}}>Copiar</Btn>
+        </div>
+      </Modal>
+    )
+  }
+
+  return(
+    <Modal open title="Enviar louvor para escolher" onClose={onClose}>
+      <p style={{fontSize:12.5,color:"#64748b",margin:"0 0 14px"}}>
+        Encontro de <b>{fmtDate(meeting.date)}</b>{cell?" · "+cell.name:""}. Marque as músicas que a pessoa pode escolher.
+      </p>
+
+      <div style={{background:"#f8fafc",border:"1px solid #e2e8f0",borderRadius:12,padding:"10px 12px",marginBottom:12}}>
+        <div style={{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:".05em",marginBottom:8}}>Quem vai escolher</div>
+        {paraQuem?(
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <Avatar name={paraQuem.name} photo={paraQuem.photo_url} size={30} color={C.primary}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:700,color:"#0f172a"}}>{paraQuem.name}</div>
+              <div style={{fontSize:11,color:paraQuem.phone?"#94a3b8":C.danger}}>{paraQuem.phone||"sem telefone — só dá para copiar o link"}</div>
+            </div>
+            <button type="button" onClick={()=>setBuscando(true)} style={{background:"#f1f5f9",border:"none",borderRadius:8,padding:"6px 10px",fontSize:12,fontWeight:700,color:"#64748b",cursor:"pointer"}}>Trocar</button>
+          </div>
+        ):(
+          <button type="button" onClick={()=>setBuscando(true)} style={{background:"#fff",border:"1.5px dashed #cbd5e1",borderRadius:10,padding:"9px 16px",fontSize:12.5,fontWeight:700,color:"#64748b",cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
+            <Icon name="search" size={13}/>Escolher pessoa
+          </button>
+        )}
+      </div>
+
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+        <span style={{fontSize:12.5,color:"#334155",fontWeight:700}}>Ela escolhe</span>
+        <select value={quantas} onChange={e=>setQuantas(Number(e.target.value))} style={{border:"1.5px solid #e2e8f0",borderRadius:10,padding:"7px 12px",fontSize:14,outline:"none",background:"#fff",fontWeight:700}}>
+          {[1,2,3,4,5].map(n=><option key={n} value={n}>{n}</option>)}
+        </select>
+        <span style={{fontSize:12.5,color:"#334155",fontWeight:700}}>de {escolhidas.length}</span>
+      </div>
+
+      <div style={{position:"sticky",top:0,background:"#fff",paddingBottom:8,zIndex:2}}>
+        <input value={busca} onChange={e=>setBusca(e.target.value)} placeholder="Buscar música..." style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"9px 14px",fontSize:16,outline:"none",boxSizing:"border-box"}}/>
+      </div>
+
+      {filtradas.map(s=>{
+        const sel=escolhidas.includes(s.id)
+        return(
+          <button key={s.id} type="button" onClick={()=>alternar(s.id)}
+            style={{width:"100%",textAlign:"left",display:"flex",alignItems:"center",gap:10,background:sel?C.success+"10":"#f8fafc",border:"1.5px solid "+(sel?C.success:"#e8edf2"),borderRadius:12,padding:"9px 12px",marginBottom:6,cursor:"pointer"}}>
+            <div style={{width:20,height:20,borderRadius:6,border:"2px solid "+(sel?C.success:"#cbd5e1"),background:sel?C.success:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              {sel&&<span style={{color:"#fff",fontSize:12,fontWeight:900,lineHeight:1}}>✓</span>}
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:700,color:"#0f172a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.title}</div>
+              <div style={{fontSize:11,color:"#94a3b8"}}>{s.artist||"—"}</div>
+            </div>
+          </button>
+        )
+      })}
+      {filtradas.length===0&&<p style={{color:"#94a3b8",textAlign:"center",fontSize:13}}>Nenhuma música encontrada</p>}
+
+      <div style={{position:"sticky",bottom:0,background:"#fff",paddingTop:10,marginTop:6}}>
+        {escolhidas.length>0&&quantas>=escolhidas.length&&<p style={{fontSize:12,color:C.danger,margin:"0 0 8px"}}>Marque mais músicas do que a pessoa deve escolher — senão não sobra escolha.</p>}
+        <Btn full disabled={!podeEnviar||enviando} onClick={enviar} icon="check">
+          {enviando?"Criando...":"Criar seleção ("+escolhidas.length+" músicas)"}
+        </Btn>
+      </div>
+
+      <MemberSearchModal open={buscando} title="Quem vai escolher o louvor?" members={members} onSelect={m=>setParaQuem(m)} onClose={()=>setBuscando(false)}/>
+    </Modal>
+  )
+}
+
 function MeetingsPanel({session,showToast}){
   const{data:meetings,loading,reload}=useTable("meetings")
   const{data:cells}=useTable("cells")
@@ -2518,6 +2783,7 @@ function MeetingsPanel({session,showToast}){
   const[saving,setSaving]=useState(false)
   const[cellFilter,setCellFilter]=useState("")
   const[enviarModal,setEnviarModal]=useState(null)
+  const[louvorModal,setLouvorModal]=useState(null)
   // Travas síncronas contra clique repetido (ver comentário em saveAttendance)
   const savingFormRef=useRef(false)
   const savingAttRef=useRef(false)
@@ -2720,6 +2986,9 @@ function MeetingsPanel({session,showToast}){
               <button onClick={()=>setCommentsModal(meeting)} style={{background:"#f0fdf4",border:"none",borderRadius:8,padding:"5px 10px",cursor:"pointer",color:C.success,fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>
                 <Icon name="comment" size={12}/>Comentários{meetingComments.length>0&&` (${meetingComments.length})`}
               </button>
+              <button onClick={()=>setLouvorModal(meeting)} style={{background:"#ede9fe",border:"none",borderRadius:8,padding:"5px 10px",cursor:"pointer",color:"#5b21b6",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>
+                <Icon name="music" size={12}/>Pedir louvor
+              </button>
               <button onClick={()=>setEnviarModal(meeting)} style={{background:"#dcfce7",border:"none",borderRadius:8,padding:"5px 10px",cursor:"pointer",color:"#166534",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>
                 <Icon name="whatsapp" size={12}/>Enviar
               </button>              <button onClick={()=>openEdit(meeting)} style={{background:"#f1f5f9",border:"none",borderRadius:8,padding:"5px 10px",cursor:"pointer",color:"#64748b",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>
@@ -2731,6 +3000,7 @@ function MeetingsPanel({session,showToast}){
       })}
 
       {/* STEP 1 — FORM */}
+      {louvorModal&&<SelecaoLouvorModal meeting={louvorModal} cells={cells} members={members} songs={allSongs} session={session} showToast={showToast} onClose={()=>setLouvorModal(null)}/>}
       {enviarModal&&(()=>{
         const texto=textoDoEncontro(enviarModal)
         const cell=cells.find(c=>c.id===enviarModal.cell_id)
