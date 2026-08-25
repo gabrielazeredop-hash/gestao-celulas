@@ -48,6 +48,8 @@ function birthYearFrom(day,month,age){
   const passou=curM>m||(curM===m&&n.getDate()>=d)
   return n.getFullYear()-a-(passou?0:1)
 }
+// Listas de pessoas sao guardadas como texto JSON nas colunas do encontro
+function lerLista(v){if(!v)return[""];try{const a=JSON.parse(v);return Array.isArray(a)&&a.length?a:[""]}catch{return v?[v]:[""]}}
 const SENHA_PADRAO="123456"
 const MESES=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
 // Uma presença por pessoa/dia/célula. Protege as contas caso sobre linha repetida no banco.
@@ -166,6 +168,7 @@ const Icon=({name,size=18,color="currentColor"})=>(
     {name==="whatsapp"&&<><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></>}
     {name==="repeat"&&<><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></>}
     {name==="chevron-right"&&<polyline points="9 18 15 12 9 6"/>}
+    {name==="chevron-left"&&<polyline points="15 18 9 12 15 6"/>}
     {name==="chevron-down"&&<polyline points="6 9 12 15 18 9"/>}
     {name==="flame"&&<><path d="M12 2c0 0-4 4-4 8a4 4 0 0 0 8 0c0-4-4-8-4-8z"/><path d="M12 12c0 0-2 2-2 4a2 2 0 0 0 4 0c0-2-2-4-2-4z"/></>}
     {name==="star"&&<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>}
@@ -684,6 +687,45 @@ function MemberSearchModal({open,onClose,members,onSelect,title="Buscar Membro"}
     </Modal>
   )
 }
+
+// Campo de "quem fez o quê" no encontro: aceita várias pessoas, cada uma podendo ser
+// digitada à mão ou buscada no cadastro. Usado pelo condutor da palavra, louvor,
+// quebra-gelo e lanche — antes esse mesmo código estava repetido para cada um.
+const NavMes=({mes,setMes,cor="#92400e"})=>(
+  <div style={{display:"flex",alignItems:"center",gap:4,marginLeft:"auto"}}>
+    <button type="button" aria-label="Mês anterior" onClick={()=>setMes(mes===1?12:mes-1)}
+      style={{background:"rgba(255,255,255,.7)",border:"1px solid #fde68a",borderRadius:8,padding:"3px 7px",cursor:"pointer",color:cor,display:"flex",alignItems:"center",lineHeight:1}}>
+      <Icon name="chevron-left" size={13}/>
+    </button>
+    <button type="button" aria-label="Próximo mês" onClick={()=>setMes(mes===12?1:mes+1)}
+      style={{background:"rgba(255,255,255,.7)",border:"1px solid #fde68a",borderRadius:8,padding:"3px 7px",cursor:"pointer",color:cor,display:"flex",alignItems:"center",lineHeight:1}}>
+      <Icon name="chevron-right" size={13}/>
+    </button>
+    {mes!==getCurrentMonth()&&<button type="button" onClick={()=>setMes(getCurrentMonth())}
+      style={{background:"rgba(255,255,255,.7)",border:"1px solid #fde68a",borderRadius:8,padding:"3px 8px",cursor:"pointer",color:cor,fontSize:10,fontWeight:700}}>hoje</button>}
+  </div>
+)
+
+function EquipeField({label,emoji,valores,onChange,membros,titulo,placeholder,addLabel}){
+  const[buscaIdx,setBuscaIdx]=useState(null)
+  const lista=valores&&valores.length?valores:[""]
+  const trocar=(i,v)=>{const a=[...lista];a[i]=v;onChange(a)}
+  return(
+    <div style={{marginBottom:14}}>
+      <label style={{display:"block",fontSize:11,fontWeight:700,color:"#64748b",marginBottom:5,letterSpacing:"0.05em",textTransform:"uppercase"}}>{emoji} {label}</label>
+      {lista.map((v,i)=>(
+        <div key={i} style={{display:"flex",gap:8,marginBottom:8}}>
+          <input value={v} onChange={e=>trocar(i,e.target.value)} placeholder={i===0?placeholder:`Mais uma pessoa`}
+            style={{flex:1,border:"1.5px solid #e2e8f0",borderRadius:10,padding:"10px 14px",fontSize:16,outline:"none",minWidth:0}}/>
+          <button type="button" onClick={()=>setBuscaIdx(i)} style={{background:C.primary+"15",border:"none",borderRadius:10,padding:"10px 12px",cursor:"pointer",color:C.primary,display:"flex",alignItems:"center",flexShrink:0}}><Icon name="search" size={14}/></button>
+          {lista.length>1&&<button type="button" onClick={()=>onChange(lista.filter((_,j)=>j!==i))} style={{background:"#fee2e2",border:"none",borderRadius:10,padding:"10px 12px",cursor:"pointer",color:"#ef4444",display:"flex",alignItems:"center",flexShrink:0}}><Icon name="x" size={14}/></button>}
+        </div>
+      ))}
+      <button type="button" onClick={()=>onChange([...lista,""])} style={{background:"#f8fafc",border:"1.5px dashed #cbd5e1",borderRadius:10,padding:"8px 16px",fontSize:12,fontWeight:700,color:"#64748b",cursor:"pointer",display:"flex",alignItems:"center",gap:6}}><Icon name="plus" size={13}/>{addLabel||"Adicionar pessoa"}</button>
+      <MemberSearchModal open={buscaIdx!==null} title={titulo} members={membros} onSelect={m=>trocar(buscaIdx,m.name)} onClose={()=>setBuscaIdx(null)}/>
+    </div>
+  )
+}
 // ─── HEADER COMPONENT ─────────────────────────────────────────────────────────
 function Header({title,subtitle,logout,onChangePw}){
   return(
@@ -989,8 +1031,8 @@ function LeaderHome({session,showToast,setTab}){
   const pendingPrayers=prayers.filter(p=>p.cell_id===session.cell_id&&p.status==="pending").length
   const{start,end}=getCurrentWeekDates()
   const weekBirthdays=members.filter(m=>m.cell_id===session.cell_id&&m.birth_date&&(()=>{const b=parseDate(m.birth_date);const t=new Date(new Date().getFullYear(),b.getMonth(),b.getDate());return t>=start&&t<=end})())
-  const currentMonth=getCurrentMonth()
-  const monthBirthdays=[...cellMembers,...cellVisitors].filter(m=>m.birth_date&&getMonthBirthday(m.birth_date)===currentMonth).sort((a,b)=>parseDate(a.birth_date).getDate()-parseDate(b.birth_date).getDate())
+  const[mesAniv,setMesAniv]=useState(getCurrentMonth())
+  const monthBirthdays=[...cellMembers,...cellVisitors].filter(m=>m.birth_date&&getMonthBirthday(m.birth_date)===mesAniv).sort((a,b)=>parseDate(a.birth_date).getDate()-parseDate(b.birth_date).getDate())
   const monthNames=["","Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
   const menu=[
     {id:"meetings",icon:"meeting",label:"Encontros",desc:"Registrar e gerenciar",color:C.success},
@@ -1052,13 +1094,15 @@ function LeaderHome({session,showToast,setTab}){
           </button>
         ))}
       </div>
-      {monthBirthdays.length>0&&(
+      {(
         <Card style={{marginTop:16,border:"1px solid #fde68a",background:"#fffbeb"}}>
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
             <span style={{fontSize:18}}>🎂</span>
-            <span style={{fontSize:13,fontWeight:800,color:"#92400e"}}>Aniversariantes — {monthNames[currentMonth]}</span>
-            <span style={{marginLeft:"auto",background:C.gold,color:"#fff",fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:10}}>{monthBirthdays.length}</span>
+            <span style={{fontSize:13,fontWeight:800,color:"#92400e"}}>{monthNames[mesAniv]}</span>
+            <span style={{background:C.gold,color:"#fff",fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:10}}>{monthBirthdays.length}</span>
+            <NavMes mes={mesAniv} setMes={setMesAniv}/>
           </div>
+          {monthBirthdays.length===0&&<p style={{color:"#b45309",fontSize:12,margin:0}}>Ninguém faz aniversário em {monthNames[mesAniv]}</p>}
           {monthBirthdays.map(m=>{
             const bDate=parseDate(m.birth_date)
             const dd=String(bDate.getDate()).padStart(2,"0")
@@ -1341,9 +1385,9 @@ function AdminOverview({session,showToast,setTab}){
   activeMembers.forEach(m=>{const cell=cells.find(c=>c.id===m.cell_id);const t=cell?.cell_type||"Sem célula";typeMap[t]=(typeMap[t]||0)+1})
 
   // Birthdays
-  const currentMonth=getCurrentMonth()
+  const[mesAniv,setMesAniv]=useState(getCurrentMonth())
   const{start,end}=getCurrentWeekDates()
-  const birthdays=members.filter(m=>m.birth_date&&m.status!=="Inativo"&&getMonthBirthday(m.birth_date)===currentMonth).sort((a,b)=>parseDate(a.birth_date).getDate()-parseDate(b.birth_date).getDate())
+  const birthdays=members.filter(m=>m.birth_date&&m.status!=="Inativo"&&getMonthBirthday(m.birth_date)===mesAniv).sort((a,b)=>parseDate(a.birth_date).getDate()-parseDate(b.birth_date).getDate())
   const weekBirthdays=members.filter(m=>{
     if(!m.birth_date)return false
     const b=parseDate(m.birth_date)
@@ -1637,9 +1681,11 @@ function AdminOverview({session,showToast,setTab}){
         <Card style={{border:"1px solid #fde68a",background:"#fffbeb"}}>
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
             <span style={{fontSize:18}}>🎂</span>
-            <span style={{fontSize:13,fontWeight:800,color:"#92400e"}}>Aniversariantes — {monthNames[currentMonth]}</span>
+            <span style={{fontSize:13,fontWeight:800,color:"#92400e"}}>{monthNames[mesAniv]}</span>
+            <span style={{background:C.gold,color:"#fff",fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:10}}>{birthdays.length}</span>
+            <NavMes mes={mesAniv} setMes={setMesAniv}/>
           </div>
-          {birthdays.length===0&&<p style={{color:"#b45309",fontSize:12,margin:0}}>Nenhum este mês</p>}
+          {birthdays.length===0&&<p style={{color:"#b45309",fontSize:12,margin:0}}>Ninguém faz aniversário em {monthNames[mesAniv]}</p>}
           <div>
             {birthdays.map(m=>(
               <div key={m.id} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",borderTop:"1px solid #fde68a"}}>
@@ -2330,7 +2376,6 @@ function MeetingsPanel({session,showToast}){
   const[savedMeeting,setSavedMeeting]=useState(null)
   const[commentsModal,setCommentsModal]=useState(null)
   const[editAttModal,setEditAttModal]=useState(null)
-  const[preacherSearchIdx,setPreacherSearchIdx]=useState(null)
   const[studySearch,setStudySearch]=useState(false)
   const[songSearch,setSongSearch]=useState(false)
   const[songQuery,setSongQuery]=useState("")
@@ -2340,11 +2385,12 @@ function MeetingsPanel({session,showToast}){
   const{data:allSongs}=useTable("songs")
   const[saving,setSaving]=useState(false)
   const[cellFilter,setCellFilter]=useState("")
+  const[enviarModal,setEnviarModal]=useState(null)
   // Travas síncronas contra clique repetido (ver comentário em saveAttendance)
   const savingFormRef=useRef(false)
   const savingAttRef=useRef(false)
 
-  const emptyForm={cell_id:session?.cell_id||"",date:todayStr(),theme:"",theme_youth:"",preachers:["",""],songs:"",photos_link:"",is_general:false}
+  const emptyForm={cell_id:session?.cell_id||"",date:todayStr(),hora:"",local:"",theme:"",theme_youth:"",preachers:["",""],louvor:[""],quebra_gelo:[""],lanche:[""],songs:"",photos_link:"",is_general:false}
   const[form,setForm]=useState(emptyForm)
   const f=k=>v=>setForm(p=>({...p,[k]:v}))
 
@@ -2357,7 +2403,7 @@ function MeetingsPanel({session,showToast}){
     let preachers=["",""]
     try{const arr=JSON.parse(meeting.preacher);if(Array.isArray(arr))preachers=arr.length<2?[...arr,...Array(2-arr.length).fill("")]:arr}
     catch{preachers=[meeting.preacher||"",meeting.preacher_kids||""]}
-    setForm({cell_id:meeting.cell_id||"",date:meeting.date,theme:meeting.theme||"",theme_youth:meeting.theme_youth||"",preachers,songs:meeting.songs||"",photos_link:meeting.photos_link||"",is_general:meeting.is_general||false})
+    setForm({cell_id:meeting.cell_id||"",date:meeting.date,hora:meeting.hora||"",local:meeting.local||"",theme:meeting.theme||"",theme_youth:meeting.theme_youth||"",preachers,louvor:lerLista(meeting.louvor),quebra_gelo:lerLista(meeting.quebra_gelo),lanche:lerLista(meeting.lanche),songs:meeting.songs||"",photos_link:meeting.photos_link||"",is_general:meeting.is_general||false})
     setSelectedSongs(songList)
     setEditing(meeting.id);setMarks({});setStep("form")
   }
@@ -2369,7 +2415,8 @@ function MeetingsPanel({session,showToast}){
     savingFormRef.current=true
     setSaving(true)
     try{
-      const payload={cell_id:form.is_general?null:form.cell_id||null,date:form.date,theme:form.theme,theme_youth:form.theme_youth,songs:form.songs,photos_link:form.photos_link,is_general:form.is_general,created_by:session.id,preacher:JSON.stringify(form.preachers.filter(p=>p.trim()))}
+      const guardarLista=a=>JSON.stringify((a||[]).map(x=>x.trim()).filter(Boolean))
+      const payload={cell_id:form.is_general?null:form.cell_id||null,date:form.date,hora:form.hora||null,local:form.local||null,theme:form.theme,theme_youth:form.theme_youth,songs:form.songs,photos_link:form.photos_link,is_general:form.is_general,created_by:session.id,preacher:guardarLista(form.preachers),louvor:guardarLista(form.louvor),quebra_gelo:guardarLista(form.quebra_gelo),lanche:guardarLista(form.lanche)}
       if(editing){
         const{error}=await supabase.from("meetings").update(payload).eq("id",editing)
         if(error){showToast("Erro ao salvar: "+error.message,"error");return}
@@ -2450,10 +2497,47 @@ function MeetingsPanel({session,showToast}){
 
   function skipAttendance(){setStep(null);setMarks({});setSavedMeeting(null)}
 
+  // Monta o resumo do encontro em texto, pronto para colar no WhatsApp do grupo.
+  // Puxa tudo do cadastro: célula, dia, horário, local, palavra, louvor, quebra-gelo e lanche.
+  function textoDoEncontro(meeting){
+    const cell=cells.find(c=>c.id===meeting.cell_id)
+    const nomes=v=>lerLista(v).map(x=>(x||"").trim()).filter(Boolean)
+    const juntar=a=>a.length>1?a.slice(0,-1).join(", ")+" e "+a[a.length-1]:a[0]
+    const d=parseDate(meeting.date)
+    const diaSemana=["Domingo","Segunda","Terça","Quarta","Quinta","Sexta","Sábado"][d.getDay()]
+    const hora=meeting.hora||cell?.time||""
+    const local=meeting.local||(cell?[cell.street,cell.number,cell.neighborhood].filter(Boolean).join(", "):"")
+    const lider=cell?members.find(m=>m.id===cell.leader_id):null
+
+    const L=[]
+    L.push(meeting.is_general?"🔥 *CELULÃO — Encontro Geral*":`🏠 *Célula ${cell?.name||""}*`)
+    L.push(`📅 ${diaSemana}, ${fmtDate(meeting.date)}${hora?` às ${hora}`:""}`)
+    if(local)L.push(`📍 ${local}`)
+    if(lider)L.push(`👤 Líder: ${lider.name}${lider.phone?` — ${fmtPhone(lider.phone)}`:""}`)
+    L.push("")
+    if(meeting.theme)L.push(`📖 *Palavra:* ${meeting.theme}`)
+    if(meeting.theme_youth)L.push(`📘 *Estudo dos jovens:* ${meeting.theme_youth}`)
+    const cond=nomes(meeting.preacher)
+    if(cond.length)L.push(`🎤 *Quem conduz:* ${juntar(cond)}`)
+    const lv=nomes(meeting.louvor)
+    if(lv.length)L.push(`🎵 *Louvor:* ${juntar(lv)}`)
+    const qg=nomes(meeting.quebra_gelo)
+    if(qg.length)L.push(`🧊 *Quebra-gelo:* ${juntar(qg)}`)
+    const ln=nomes(meeting.lanche)
+    if(ln.length)L.push(`🍰 *Lanche:* ${juntar(ln)}`)
+    if(meeting.songs)L.push(`🎶 *Músicas:* ${meeting.songs}`)
+    L.push("")
+    L.push("_Te esperamos lá!_ 🙌")
+    return L.join("\n").replace(/\n{3,}/g,"\n\n")
+  }
+
   const myMeetings=isAdmin||session?.role==="supervisor"?meetings:meetings.filter(m=>m.cell_id===session?.cell_id||m.is_general)
   const filteredMeetings=myMeetings.filter(m=>!cellFilter||m.cell_id===cellFilter||m.is_general).sort((a,b)=>b.date.localeCompare(a.date))
   const currentMeeting=savedMeeting||(editing?meetings.find(m=>m.id===editing):null)
   const attMembers=currentMeeting?(currentMeeting.is_general?members.filter(m=>m.status==="Membro"||m.status==="Visitante"):members.filter(m=>m.cell_id===currentMeeting.cell_id&&(m.status==="Membro"||m.status==="Visitante"))):[]
+  // Horário e endereço que a célula já tem cadastrados, usados como sugestão
+  const cellPadrao=cells.find(c=>c.id===form.cell_id)
+  const enderecoPadrao=cellPadrao?[cellPadrao.street,cellPadrao.number,cellPadrao.neighborhood].filter(Boolean).join(", "):""
   const presentCount=Object.values(marks).filter(v=>v==="Presente").length
 
   return(
@@ -2504,7 +2588,9 @@ function MeetingsPanel({session,showToast}){
               <button onClick={()=>setCommentsModal(meeting)} style={{background:"#f0fdf4",border:"none",borderRadius:8,padding:"5px 10px",cursor:"pointer",color:C.success,fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>
                 <Icon name="comment" size={12}/>Comentários{meetingComments.length>0&&` (${meetingComments.length})`}
               </button>
-              <button onClick={()=>openEdit(meeting)} style={{background:"#f1f5f9",border:"none",borderRadius:8,padding:"5px 10px",cursor:"pointer",color:"#64748b",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>
+              <button onClick={()=>setEnviarModal(meeting)} style={{background:"#dcfce7",border:"none",borderRadius:8,padding:"5px 10px",cursor:"pointer",color:"#166534",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>
+                <Icon name="whatsapp" size={12}/>Enviar
+              </button>              <button onClick={()=>openEdit(meeting)} style={{background:"#f1f5f9",border:"none",borderRadius:8,padding:"5px 10px",cursor:"pointer",color:"#64748b",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>
                 <Icon name="edit" size={12}/>Editar
               </button>
             </div>
@@ -2513,7 +2599,41 @@ function MeetingsPanel({session,showToast}){
       })}
 
       {/* STEP 1 — FORM */}
-      <Modal open={step==="form"} onClose={()=>setStep(null)} title={editing?"Editar Encontro":"Novo Encontro"}>
+      {enviarModal&&(()=>{
+        const texto=textoDoEncontro(enviarModal)
+        const cell=cells.find(c=>c.id===enviarModal.cell_id)
+        const daCelula=members.filter(m=>m.cell_id===enviarModal.cell_id&&(m.phone||"").replace(/\D/g,"").length>=10)
+        const wa=n=>`https://wa.me/${n?"55"+n.replace(/\D/g,""):""}?text=${encodeURIComponent(texto)}`
+        return(
+          <Modal open title="Enviar encontro" onClose={()=>setEnviarModal(null)}>
+            <div style={{background:"#f8fafc",border:"1px solid #e2e8f0",borderRadius:12,padding:"12px 14px",marginBottom:14,fontSize:13,color:"#0f172a",whiteSpace:"pre-wrap",lineHeight:1.6,fontFamily:"inherit"}}>{texto}</div>
+            <div style={{display:"flex",gap:8,marginBottom:16}}>
+              <Btn full variant="success" icon="whatsapp" onClick={()=>window.open(wa(),"_blank")}>Escolher grupo ou pessoa</Btn>
+              <Btn variant="secondary" icon="copy" onClick={async()=>{
+                try{await navigator.clipboard.writeText(texto);showToast("Texto copiado!")}
+                catch{showToast("Não consegui copiar — selecione o texto acima","error")}
+              }}>Copiar</Btn>
+            </div>
+            {daCelula.length>0&&(
+              <div>
+                <div style={{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:".05em",marginBottom:8}}>Ou mandar direto para alguém da {cell?.name||"célula"}</div>
+                <p style={{fontSize:11.5,color:"#94a3b8",margin:"0 0 10px"}}>O WhatsApp abre uma conversa por vez — toque em cada pessoa que quiser avisar.</p>
+                {daCelula.map(m=>(
+                  <a key={m.id} href={wa(m.phone)} target="_blank" rel="noopener noreferrer"
+                    style={{display:"flex",alignItems:"center",gap:10,background:"#f8fafc",border:"1px solid #e8edf2",borderRadius:12,padding:"9px 12px",marginBottom:6,textDecoration:"none"}}>
+                    <Avatar name={m.name} photo={m.photo_url} size={30} color={C.success}/>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:700,color:"#0f172a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.name}</div>
+                      <div style={{fontSize:11,color:"#94a3b8"}}>{m.phone}</div>
+                    </div>
+                    <Icon name="whatsapp" size={15}/>
+                  </a>
+                ))}
+              </div>
+            )}
+          </Modal>
+        )
+      })()}      <Modal open={step==="form"} onClose={()=>setStep(null)} title={editing?"Editar Encontro":"Novo Encontro"}>
         <div style={{marginBottom:14}}>
           <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",background:form.is_general?C.gold+"10":"#f8fafc",border:`1.5px solid ${form.is_general?C.gold:"#e2e8f0"}`,borderRadius:12,padding:12}}>
             <input type="checkbox" checked={form.is_general} onChange={e=>f("is_general")(e.target.checked)} style={{width:16,height:16,accentColor:C.gold}}/>
@@ -2526,26 +2646,21 @@ function MeetingsPanel({session,showToast}){
           </div>
           :<Sel label="Célula" value={form.cell_id} onChange={f("cell_id")} options={[{value:"",label:"Selecione..."},...myCells.map(c=>({value:c.id,label:c.name}))]} required/>
         )}
-        <Inp label="Data" type="date" value={form.date} onChange={f("date")} required/>
-        <div style={{marginBottom:14}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <Inp label="Data" type="date" value={form.date} onChange={f("date")} required/>
+          <Inp label="Horário" type="time" value={form.hora} onChange={f("hora")} hint={cellPadrao?.time?`padrão: ${cellPadrao.time}`:""}/>
+        </div>
+        <Inp label="Local" value={form.local} onChange={f("local")} placeholder={enderecoPadrao||"Onde vai acontecer"} hint={enderecoPadrao?"deixe vazio para usar o endereço da célula":""}/>        <div style={{marginBottom:14}}>
           <label style={{display:"block",fontSize:11,fontWeight:700,color:"#64748b",marginBottom:5,letterSpacing:"0.05em",textTransform:"uppercase"}}>Tema da Palavra</label>
           <div style={{display:"flex",gap:8}}>
             <input value={form.theme} onChange={e=>f("theme")(e.target.value)} placeholder="Tema do encontro" style={{flex:1,border:"1.5px solid #e2e8f0",borderRadius:10,padding:"10px 14px",fontSize:14,outline:"none"}}/>
             <button type="button" onClick={()=>setStudySearch(true)} style={{background:C.gold+"15",border:"none",borderRadius:10,padding:"10px 12px",cursor:"pointer",color:C.gold,display:"flex",alignItems:"center",gap:5,fontSize:12,fontWeight:700,flexShrink:0}}><Icon name="star" size={14}/>Estudos</button>
           </div>
         </div>
-        <div style={{marginBottom:14}}>
-          <label style={{display:"block",fontSize:11,fontWeight:700,color:"#64748b",marginBottom:6,letterSpacing:"0.05em",textTransform:"uppercase"}}>🎤 Quem conduziu a Palavra</label>
-          {form.preachers.map((p,i)=>(
-            <div key={i} style={{display:"flex",gap:8,marginBottom:8}}>
-              <input value={p} onChange={e=>{const arr=[...form.preachers];arr[i]=e.target.value;f("preachers")(arr)}} placeholder={i===0?"Nome de quem conduziu":`Condutor ${i+1}`} style={{flex:1,border:"1.5px solid #e2e8f0",borderRadius:10,padding:"10px 14px",fontSize:14,outline:"none"}}/>
-              <button type="button" onClick={()=>setPreacherSearchIdx(i)} style={{background:C.primary+"15",border:"none",borderRadius:10,padding:"10px 12px",cursor:"pointer",color:C.primary,display:"flex",alignItems:"center"}}><Icon name="search" size={14}/></button>
-              {form.preachers.length>1&&<button type="button" onClick={()=>f("preachers")(form.preachers.filter((_,j)=>j!==i))} style={{background:"#fee2e2",border:"none",borderRadius:10,padding:"10px 12px",cursor:"pointer",color:"#ef4444",display:"flex",alignItems:"center"}}><Icon name="x" size={14}/></button>}
-            </div>
-          ))}
-          <button type="button" onClick={()=>f("preachers")([...form.preachers,""])} style={{background:"#f8fafc",border:"1.5px dashed #cbd5e1",borderRadius:10,padding:"8px 16px",fontSize:12,fontWeight:700,color:"#64748b",cursor:"pointer",display:"flex",alignItems:"center",gap:6}}><Icon name="plus" size={13}/>Adicionar condutor</button>
-        </div>
-        <div style={{marginBottom:14}}>
+        <EquipeField label="Quem conduziu a Palavra" emoji="🎤" valores={form.preachers} onChange={f("preachers")} membros={members} titulo="Quem passou a Palavra?" placeholder="Nome de quem conduziu" addLabel="Adicionar condutor"/>
+        <EquipeField label="Quem separou o louvor" emoji="🎵" valores={form.louvor} onChange={f("louvor")} membros={members} titulo="Quem separou o louvor?" placeholder="Nome de quem separou" addLabel="Adicionar pessoa"/>
+        <EquipeField label="Quem fez o quebra-gelo" emoji="🧊" valores={form.quebra_gelo} onChange={f("quebra_gelo")} membros={members} titulo="Quem fez o quebra-gelo?" placeholder="Nome de quem conduziu" addLabel="Adicionar pessoa"/>
+        <EquipeField label="Quem fez o lanche" emoji="🍰" valores={form.lanche} onChange={f("lanche")} membros={members} titulo="Quem fez o lanche?" placeholder="Nome de quem trouxe" addLabel="Adicionar pessoa"/>        <div style={{marginBottom:14}}>
           <label style={{display:"block",fontSize:11,fontWeight:700,color:"#64748b",marginBottom:5,letterSpacing:"0.05em",textTransform:"uppercase"}}>Músicas Cantadas</label>
           <div style={{display:"flex",gap:8,marginBottom:8}}>
             <input value={form.songs} onChange={e=>f("songs")(e.target.value)} placeholder="Digite manualmente ou use o botão..." style={{flex:1,border:"1.5px solid #e2e8f0",borderRadius:10,padding:"10px 14px",fontSize:14,outline:"none"}}/>
@@ -2635,7 +2750,7 @@ function MeetingsPanel({session,showToast}){
           }}>Excluir</Btn>
         </div>
       </Modal>}
-      <MemberSearchModal open={preacherSearchIdx!==null} title="🎤 Quem passou a Palavra?" members={members} onSelect={m=>{const arr=[...form.preachers];arr[preacherSearchIdx]=m.name;f("preachers")(arr)}} onClose={()=>setPreacherSearchIdx(null)}/>
+
       <Modal open={songSearch} onClose={()=>setSongSearch(false)} title="Selecionar Músicas 🎵">
         <p style={{fontSize:12,color:"#64748b",marginBottom:10}}>Selecione quantas músicas quiser. Clique novamente para remover.</p>
         <div style={{position:"relative",marginBottom:12}}>
@@ -3160,7 +3275,7 @@ function SongsPanel({session,showToast}){
                     <div style={{fontSize:14,fontWeight:800,color:"#0f172a"}}>{s.title}</div>
                     <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginTop:3}}>
                       <span style={{fontSize:11,color:"#94a3b8"}}>{s.artist||"—"}</span>
-                      {s.tom_ig&&<span style={{fontSize:11,color:C.primary,fontWeight:700}}>Tom: {s.tom_ig}</span>}
+                      
                       {cats.map(c=><span key={c} style={{fontSize:10,background:C.primary+"15",color:C.primary,borderRadius:6,padding:"1px 6px",fontWeight:600}}>{c}</span>)}
                     </div>
                   </div>
@@ -3216,21 +3331,6 @@ function SongsPanel({session,showToast}){
           </div>
 
           <Inp label="Artista / Ministério" value={form.artist} onChange={v=>setForm(f=>({...f,artist:v}))} placeholder="Ex: Ministério Zoe"/>
-
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
-            <div>
-              <label style={{fontSize:12,fontWeight:700,color:"#64748b",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:.5}}>Tom Original</label>
-              <select value={form.tom} onChange={e=>setForm(f=>({...f,tom:e.target.value}))} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"10px 14px",fontSize:14,outline:"none",background:"#fff"}}>
-                {SONG_TONS.map(t=><option key={t} value={t}>{t||"—"}</option>)}
-              </select>
-            </div>
-            <div>
-              <label style={{fontSize:12,fontWeight:700,color:"#64748b",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:.5}}>Tom na Igreja</label>
-              <select value={form.tomIg} onChange={e=>setForm(f=>({...f,tomIg:e.target.value}))} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"10px 14px",fontSize:14,outline:"none",background:"#fff"}}>
-                {SONG_TONS.map(t=><option key={t} value={t}>{t||"—"}</option>)}
-              </select>
-            </div>
-          </div>
 
           <div style={{marginBottom:14}}>
             <label style={{fontSize:12,fontWeight:700,color:"#64748b",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:.5}}>Link Cifra Club</label>
