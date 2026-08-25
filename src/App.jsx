@@ -477,10 +477,16 @@ function LoginPage({onLogin,showToast}){
       if(!data){const r2=await supabase.from("users").select("*").eq("cpf",fmtCPF(cpfNorm)).single();if(r2.data)data=r2.data}
     }
     if(!data){
+      // O telefone e gravado formatado - "(21) 99201-8539". Procurar os ultimos 8
+      // digitos direto no texto nunca casava: o hifen parte os digitos no meio.
+      // Comparamos so os numeros, dos dois lados.
       const phoneNorm=input.replace(/\D/g,"")
       if(phoneNorm.length>=8){
-        const{data:members}=await supabase.from("members").select("id,phone").ilike("phone",`%${phoneNorm.slice(-8)}`)
-        if(members&&members.length>0){const member=members[0];const{data:u}=await supabase.from("users").select("*").eq("member_id",member.id).maybeSingle();if(u)data=u}
+        const{data:members}=await supabase.from("members").select("id,phone")
+        const so=v=>(v||"").replace(/\D/g,"")
+        const lista=(members||[]).filter(x=>so(x.phone).length>=8)
+        const member=lista.find(x=>so(x.phone)===phoneNorm)||lista.find(x=>so(x.phone).endsWith(phoneNorm.slice(-8)))
+        if(member){const{data:u}=await supabase.from("users").select("*").eq("member_id",member.id).maybeSingle();if(u)data=u}
       }
     }
     if(!data){
