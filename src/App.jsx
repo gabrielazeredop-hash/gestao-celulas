@@ -236,27 +236,49 @@ const Card=({children,style:extra={}})=>(
 )
 
 const Modal=({open,onClose,title,children})=>{
+  // Trava a rolagem do fundo. Só "overflow:hidden" no body não segura no celular —
+  // o iOS continua rolando a tela de trás. Prender o body com position:fixed segura,
+  // e ao fechar devolvemos a pessoa exatamente para onde ela estava.
   useEffect(()=>{
-    if(open){document.body.style.overflow="hidden"}
-    else{document.body.style.overflow=""}
-    return()=>{document.body.style.overflow=""}
+    if(!open)return
+    const y=window.scrollY
+    const b=document.body
+    const antes={position:b.style.position,top:b.style.top,width:b.style.width,overflow:b.style.overflow}
+    b.style.position="fixed";b.style.top=`-${y}px`;b.style.width="100%";b.style.overflow="hidden"
+    return()=>{
+      b.style.position=antes.position;b.style.top=antes.top;b.style.width=antes.width;b.style.overflow=antes.overflow
+      window.scrollTo(0,y)
+    }
   },[open])
+
+  // Altura visível de verdade: quando o teclado do celular abre, ele come parte da
+  // tela. "vh" não enxerga isso e a folha ficava escondida atrás do teclado.
+  const[alturaVisivel,setAlturaVisivel]=useState(null)
+  useEffect(()=>{
+    if(!open||!window.visualViewport)return
+    const vv=window.visualViewport
+    const medir=()=>setAlturaVisivel(vv.height)
+    medir()
+    vv.addEventListener("resize",medir);vv.addEventListener("scroll",medir)
+    return()=>{vv.removeEventListener("resize",medir);vv.removeEventListener("scroll",medir);setAlturaVisivel(null)}
+  },[open])
+
   if(!open)return null
+  const maxH=alturaVisivel?`${Math.round(alturaVisivel*0.92)}px`:"92vh"
   return(
-    <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.65)",zIndex:1000,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose()}}>
-      <div style={{background:"#fff",borderRadius:"24px 24px 0 0",width:"100%",maxWidth:480,maxHeight:"92vh",overflow:"hidden",display:"flex",flexDirection:"column",boxShadow:"0 -8px 32px rgba(0,0,0,0.15)"}}>
+    <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.65)",zIndex:1000,display:"flex",alignItems:"flex-end",justifyContent:"center",overscrollBehavior:"contain"}} onClick={e=>{if(e.target===e.currentTarget)onClose()}}>
+      <div style={{background:"#fff",borderRadius:"24px 24px 0 0",width:"100%",maxWidth:480,maxHeight:maxH,overflow:"hidden",display:"flex",flexDirection:"column",boxShadow:"0 -8px 32px rgba(0,0,0,0.15)"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 20px 14px",borderBottom:"1px solid #f1f5f9",flexShrink:0}}>
           <h3 style={{margin:0,fontSize:17,fontWeight:800,color:"#0f172a",flex:1,paddingRight:12}}>{title}</h3>
           <button onClick={onClose} style={{background:"#f1f5f9",border:"none",borderRadius:12,padding:"10px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:6,color:"#64748b",fontSize:13,fontWeight:700,flexShrink:0}}>
             <Icon name="x" size={16}/>Fechar
           </button>
         </div>
-        <div style={{overflowY:"auto",padding:"16px 20px 32px",flex:1}}>{children}</div>
+        <div style={{overflowY:"auto",overscrollBehavior:"contain",WebkitOverflowScrolling:"touch",padding:"16px 20px 32px",flex:1}}>{children}</div>
       </div>
     </div>
   )
 }
-
 const Toast=({msg,type="success"})=>{
   if(!msg)return null
   const colors={success:["#dcfce7","#166534"],error:["#fee2e2","#991b1b"],info:["#dbeafe",C.primary],warning:["#fef3c7","#92400e"]}
@@ -617,19 +639,43 @@ function ChangePasswordModal({open,onClose,session,showToast}){
 
 function MemberSearchModal({open,onClose,members,onSelect,title="Buscar Membro"}){
   const[search,setSearch]=useState("")
-  const filtered=members.filter(m=>m.name.toLowerCase().includes(search.toLowerCase())||(m.phone||"").includes(search))
+  // Zera a busca toda vez que abre. Antes o texto do campo anterior continuava ali —
+  // procurava "Gabriel" para o adulto e, ao abrir para o kids, "Gabriel" ainda estava
+  // escrito, parecendo que os dois campos eram o mesmo.
+  useEffect(()=>{if(open)setSearch("")},[open])
+
+  const termo=search.trim().toLowerCase()
+  const so=v=>(v||"").replace(/\D/g,"")
+  // Só procura por telefone se a pessoa digitou numeros. Sem esse cuidado, "marconi"
+  // vira "" ao tirar os nao-digitos, e "" esta contido em qualquer telefone: todo
+  // mundo casava e a lista nunca filtrava.
+  const digitos=so(termo)
+  const filtered=members.filter(m=>
+    m.name.toLowerCase().includes(termo)||(digitos.length>=3&&so(m.phone).includes(digitos))
+  ).sort((a,b)=>{
+    // quem começa com o que foi digitado aparece primeiro
+    const ai=a.name.toLowerCase().startsWith(termo)?0:1
+    const bi=b.name.toLowerCase().startsWith(termo)?0:1
+    return ai-bi||a.name.localeCompare(b.name)
+  })
+
   return(
     <Modal open={open} onClose={onClose} title={title}>
-      <div style={{position:"relative",marginBottom:14}}>
-        <div style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",color:"#94a3b8",pointerEvents:"none"}}><Icon name="search" size={15}/></div>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar pelo nome..." autoFocus
-          style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"10px 14px 10px 36px",fontSize:14,outline:"none"}}/>
+      {/* o campo de busca gruda no topo para não sumir enquanto a lista rola */}
+      <div style={{position:"sticky",top:0,background:"#fff",paddingBottom:10,marginBottom:4,zIndex:2}}>
+        <div style={{position:"relative"}}>
+          <div style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",color:"#94a3b8",pointerEvents:"none"}}><Icon name="search" size={15}/></div>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar pelo nome..." autoFocus
+            style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"10px 14px 10px 36px",fontSize:16,outline:"none",boxSizing:"border-box"}}/>
+          {search&&<button type="button" onClick={()=>setSearch("")} style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"#f1f5f9",border:"none",borderRadius:8,padding:6,cursor:"pointer",color:"#64748b",display:"flex"}}><Icon name="x" size={13}/></button>}
+        </div>
+        <div style={{fontSize:11,color:"#94a3b8",marginTop:6}}>{filtered.length} {filtered.length===1?"pessoa":"pessoas"}{termo?(filtered.length===1?" encontrada":" encontradas"):""}</div>
       </div>
-      {filtered.slice(0,10).map(m=>(
+      {filtered.slice(0,40).map(m=>(
         <button key={m.id} onClick={()=>{onSelect(m);onClose()}} style={{width:"100%",textAlign:"left",background:"#f8fafc",border:"1px solid #e8edf2",borderRadius:12,padding:"10px 14px",cursor:"pointer",marginBottom:6,display:"flex",alignItems:"center",gap:12,transition:"background 0.1s"}}
           onMouseOver={e=>e.currentTarget.style.background="#eff6ff"} onMouseOut={e=>e.currentTarget.style.background="#f8fafc"}>
           <Avatar name={m.name} photo={m.photo_url} size={34} color={C.primary}/>
-          <div><div style={{fontSize:13,fontWeight:700,color:"#0f172a"}}>{m.name}</div>
+          <div style={{minWidth:0}}><div style={{fontSize:13,fontWeight:700,color:"#0f172a"}}>{m.name}</div>
             <div style={{fontSize:11,color:"#94a3b8"}}>{m.phone||"Sem telefone"}</div>
           </div>
         </button>
@@ -638,7 +684,6 @@ function MemberSearchModal({open,onClose,members,onSelect,title="Buscar Membro"}
     </Modal>
   )
 }
-
 // ─── HEADER COMPONENT ─────────────────────────────────────────────────────────
 function Header({title,subtitle,logout,onChangePw}){
   return(
