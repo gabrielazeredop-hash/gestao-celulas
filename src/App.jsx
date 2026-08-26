@@ -1897,8 +1897,10 @@ function CellsPanel({session,showToast}){
       showToast("Célula criada!")
     }
     if(cellId){
-      for(const id of form.leaders_ids)await supabase.from("users").update({role:"leader",cell_id:cellId}).eq("member_id",id)
-      for(const id of form.secretaries_ids)await supabase.from("users").update({role:"secretary",cell_id:cellId}).eq("member_id",id)
+      // nunca rebaixa admin/supervisor: só promove quem é member/leader/secretary
+      const PROMOVIVEIS=["member","leader","secretary"]
+      for(const id of form.leaders_ids)await supabase.from("users").update({role:"leader",cell_id:cellId}).eq("member_id",id).in("role",PROMOVIVEIS)
+      for(const id of form.secretaries_ids)await supabase.from("users").update({role:"secretary",cell_id:cellId}).eq("member_id",id).in("role",PROMOVIVEIS)
       // vínculo também na ficha da pessoa, para ela cair na célula certa
       const vinculados=[...form.leaders_ids,...form.secretaries_ids]
       for(const id of vinculados)await supabase.from("members").update({cell_id:cellId}).eq("id",id)
