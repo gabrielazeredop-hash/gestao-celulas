@@ -2271,34 +2271,33 @@ function MembersPanel({session,showToast}){
           const isMember=m.status==="Membro"
           const isInativo=m.status==="Inativo"
           return(
-            <div key={m.id} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",borderTop:i>0?"1px solid #f1f5f9":"none",transition:"background 0.1s",cursor:"pointer",background:isInativo?"#fafafa":"transparent",opacity:isInativo?0.8:1}}
-              onMouseOver={e=>e.currentTarget.style.background="#f8fafc"} onMouseOut={e=>e.currentTarget.style.background=isInativo?"#fafafa":"transparent"}>
-              <Avatar name={m.name} photo={m.photo_url} size={38} color={isInativo?"#94a3b8":isMember?C.primary:C.gold}/>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:14,fontWeight:700,color:isInativo?"#94a3b8":"#0f172a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.name}</div>
-                <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
-                  <span style={{fontSize:11,color:"#94a3b8"}}>{cell?.name||"Sem célula"}{ageOf(m)?` • ${ageOf(m)} anos`:""}</span>
-                  {ageOf(m)&&!isInativo&&getAgeGroup(ageOf(m))&&<span style={{fontSize:10,fontWeight:700,color:getAgeGroup(ageOf(m)).color,background:getAgeGroup(ageOf(m)).color+"15",borderRadius:6,padding:"1px 6px"}}>{getAgeGroup(ageOf(m)).label}</span>}
-                  {isInativo&&m.inactivated_at&&<span style={{fontSize:10,color:"#94a3b8"}}>Inativado em {fmtDate(m.inactivated_at?.split("T")[0])}</span>}
+            <div key={m.id} style={{padding:"12px 14px",borderTop:i>0?"1px solid #f1f5f9":"none",background:isInativo?"#fafafa":"#fff",opacity:isInativo?0.85:1}}>
+              {/* topo: toca para abrir a ficha */}
+              <div onClick={()=>setCardModal(m)} style={{display:"flex",alignItems:"center",gap:12,cursor:"pointer"}}>
+                <Avatar name={m.name} photo={m.photo_url} size={42} color={isInativo?"#94a3b8":isMember?C.primary:C.gold}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                    <span style={{fontSize:15,fontWeight:700,color:isInativo?"#94a3b8":"#0f172a",lineHeight:1.25}}>{m.name}</span>
+                    <Badge label={m.status} color={isInativo?"#94a3b8":isMember?C.primary:C.gold}/>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginTop:3}}>
+                    <span style={{fontSize:12,color:"#94a3b8"}}>{cell?.name||"Sem célula"}{ageOf(m)?` • ${ageOf(m)} anos`:""}</span>
+                    {ageOf(m)&&!isInativo&&getAgeGroup(ageOf(m))&&<span style={{fontSize:10,fontWeight:700,color:getAgeGroup(ageOf(m)).color,background:getAgeGroup(ageOf(m)).color+"15",borderRadius:6,padding:"1px 6px"}}>{getAgeGroup(ageOf(m)).label}</span>}
+                  </div>
+                  {isInativo&&m.inactive_reason&&<div style={{fontSize:11,color:"#ef4444",marginTop:2}}>Inativado{m.inactivated_at?` em ${fmtDate(m.inactivated_at?.split("T")[0])}`:""} — {m.inactive_reason}</div>}
                 </div>
-                {isInativo&&m.inactive_reason&&<div style={{fontSize:11,color:"#ef4444",marginTop:2}}>Motivo: {m.inactive_reason}</div>}
               </div>
-              <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
-                {!isInativo&&m.phone?(
-                  <a href={whatsappLink(m.phone)} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{background:"#dcfce7",border:"1px solid #bbf7d0",borderRadius:8,padding:"3px 8px",display:"flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700,color:"#166534",textDecoration:"none"}}>
-                    <Icon name="whatsapp" size={11}/>{fmtPhone(m.phone)}
-                  </a>
-                ):<span style={{fontSize:11,color:"#cbd5e1"}}>{isInativo?"":""}</span>}
-                <Badge label={m.status} color={isInativo?"#94a3b8":isMember?C.primary:C.gold}/>
-              </div>
-              <div style={{display:"flex",gap:4,marginLeft:4}}>
-                {!isInativo&&<button onClick={e=>{e.stopPropagation();setCardModal(m)}} style={{background:"#f1f5f9",border:"none",borderRadius:8,padding:6,cursor:"pointer",color:"#64748b"}}><Icon name="id-card" size={13}/></button>}
-                {!isInativo&&<button onClick={e=>{e.stopPropagation();openEdit(m)}} style={{background:C.primary+"15",border:"none",borderRadius:8,padding:6,cursor:"pointer",color:C.primary}}><Icon name="edit" size={13}/></button>}
-                {!isInativo&&canInactivate&&<button onClick={e=>{e.stopPropagation();setInactivateModal(m.id);setInactiveReason("")}} style={{background:"#fee2e2",border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer",color:C.danger,fontSize:11,fontWeight:700}}>Inativar</button>}
-                {!isInativo&&!canInactivate&&(session?.role==="leader"||session?.role==="secretary")&&<button onClick={e=>{e.stopPropagation();setRequestInactModal(m.id);setRequestInactReason("")}} style={{background:"#fef3c7",border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer",color:C.warning,fontSize:11,fontWeight:700}}>Solicitar Inativação</button>}
-                {!canInactivate&&(session?.role==="leader"||session?.role==="secretary")&&<button onClick={e=>{e.stopPropagation();setRequestDeleteModal(m.id);setRequestDeleteReason("")}} style={{background:"#fee2e2",border:"none",borderRadius:8,padding:6,cursor:"pointer",color:C.danger}}><Icon name="trash" size={13}/></button>}
-                {isInativo&&canInactivate&&<button onClick={e=>{e.stopPropagation();setReactivateModal(m.id)}} style={{background:"#dcfce7",border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer",color:C.success,fontSize:11,fontWeight:700}}>Reativar</button>}
-                {session?.role==="admin"&&<button onClick={e=>{e.stopPropagation();setDeleteId(m.id)}} style={{background:"#fee2e2",border:"none",borderRadius:8,padding:6,cursor:"pointer",color:C.danger}}><Icon name="trash" size={13}/></button>}
+              {/* ações: linha de ícones */}
+              <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}>
+                {(()=>{const btn={width:38,height:38,borderRadius:10,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0};return<>
+                {!isInativo&&m.phone&&<a href={whatsappLink(m.phone)} target="_blank" rel="noopener noreferrer" title="WhatsApp" style={{...btn,background:"#dcfce7",color:"#166534",textDecoration:"none"}}><Icon name="whatsapp" size={16}/></a>}
+                {!isInativo&&<button title="Editar" onClick={()=>openEdit(m)} style={{...btn,background:C.primary+"15",color:C.primary}}><Icon name="edit" size={16}/></button>}
+                {!isInativo&&canInactivate&&<button title="Inativar" onClick={()=>{setInactivateModal(m.id);setInactiveReason("")}} style={{...btn,background:"#fef3c7",color:C.warning}}><Icon name="pause" size={16}/></button>}
+                {!isInativo&&!canInactivate&&(session?.role==="leader"||session?.role==="secretary")&&<button title="Solicitar inativação" onClick={()=>{setRequestInactModal(m.id);setRequestInactReason("")}} style={{...btn,background:"#fef3c7",color:C.warning}}><Icon name="pause" size={16}/></button>}
+                {!canInactivate&&(session?.role==="leader"||session?.role==="secretary")&&<button title="Solicitar exclusão" onClick={()=>{setRequestDeleteModal(m.id);setRequestDeleteReason("")}} style={{...btn,background:"#fee2e2",color:C.danger}}><Icon name="trash" size={16}/></button>}
+                {isInativo&&canInactivate&&<button title="Reativar" onClick={()=>setReactivateModal(m.id)} style={{...btn,background:"#dcfce7",color:C.success}}><Icon name="play" size={16}/></button>}
+                {session?.role==="admin"&&<button title="Excluir" onClick={()=>setDeleteId(m.id)} style={{...btn,background:"#fee2e2",color:C.danger}}><Icon name="trash" size={16}/></button>}
+                </>})()}
               </div>
             </div>
           )
